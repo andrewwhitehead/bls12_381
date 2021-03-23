@@ -16,6 +16,7 @@ use group::WnafGroup;
 
 use crate::fp::Fp;
 use crate::fp2::Fp2;
+use crate::hash_to_curve::IsogenyMap;
 use crate::Scalar;
 
 /// This is an element of $\mathbb{G}_2$ represented in the affine coordinate space.
@@ -996,6 +997,362 @@ impl G2Projective {
 
         (self.y.square() * self.z).ct_eq(&(self.x.square() * self.x + self.z.square() * self.z * B))
             | self.z.is_zero()
+    }
+
+    /// Isogeny evaluation function.
+    pub(crate) fn eval_iso(&mut self, coeffs: [&[Fp2]; 4]) {
+        let mut tmp = [Fp2::zero(); 4];
+        let mut mapvals = [Fp2::zero(); 4];
+
+        // unpack input point
+        let x = &mut self.x;
+        let y = &mut self.y;
+        let z = &mut self.z;
+
+        // precompute powers of z
+        let zpows = {
+            let mut zpows = [Fp2::zero(); 3];
+            zpows[0] = z.square(); // z^2
+            zpows[1] = zpows[0].square(); // z^4
+            {
+                let (z_squared, rest) = zpows.split_at_mut(1);
+                for idx in 1..coeffs[2].len() - 2 {
+                    if idx % 2 == 0 {
+                        rest[idx] = rest[idx / 2 - 1].square();
+                    } else {
+                        rest[idx] = rest[idx - 1];
+                        rest[idx].mul_assign(&z_squared[0]);
+                    }
+                }
+            }
+            zpows
+        };
+
+        for idx in 0..4 {
+            let clen = coeffs[idx].len() - 1;
+            // multiply coeffs by powers of Z
+            for jdx in 0..clen {
+                tmp[jdx] = coeffs[idx][clen - 1 - jdx];
+                tmp[jdx].mul_assign(&zpows[jdx]);
+            }
+            // compute map value by Horner's rule
+            mapvals[idx] = coeffs[idx][clen];
+            for tmpval in &tmp[..clen] {
+                mapvals[idx].mul_assign(&*x);
+                mapvals[idx].add_assign(tmpval);
+            }
+        }
+
+        // x denominator is order 1 less than x numerator, so we need an extra factor of Z^2
+        mapvals[1].mul_assign(&zpows[0]);
+
+        // multiply result of Y map by the y-coord, y / z^3
+        mapvals[2].mul_assign(&*y);
+        mapvals[3].mul_assign(&*z);
+        mapvals[3].mul_assign(&zpows[0]);
+
+        // compute Jacobian coordinates of resulting point
+        *z = mapvals[1] * mapvals[3]; // Zout = xden * yden
+
+        *x = mapvals[0];
+        x.mul_assign(&mapvals[3]); // xnum * yden
+        x.mul_assign(&*z); // xnum * xden * yden^2
+
+        *y = z.square(); // xden^2 * yden^2
+        y.mul_assign(&mapvals[2]); // ynum * xden^2 * yden^2
+        y.mul_assign(&mapvals[1]); // ynum * xden^3 * yden^2
+    }
+}
+
+/// Coefficients of the 3-isogeny x map's numerator
+const XNUM: [Fp2; 4] = [
+    Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x47f671c71ce05e62,
+            0x06dd57071206393e,
+            0x7c80cd2af3fd71a2,
+            0x048103ea9e6cd062,
+            0xc54516acc8d037f6,
+            0x13808f550920ea41,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x47f671c71ce05e62,
+            0x06dd57071206393e,
+            0x7c80cd2af3fd71a2,
+            0x048103ea9e6cd062,
+            0xc54516acc8d037f6,
+            0x13808f550920ea41,
+        ]),
+    },
+    Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x5fe55555554c71d0,
+            0x873fffdd236aaaa3,
+            0x6a6b4619b26ef918,
+            0x21c2888408874945,
+            0x2836cda7028cabc5,
+            0x0ac73310a7fd5abd,
+        ]),
+    },
+    Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x0a0c5555555971c3,
+            0xdb0c00101f9eaaae,
+            0xb1fb2f941d797997,
+            0xd3960742ef416e1c,
+            0xb70040e2c20556f4,
+            0x149d7861e581393b,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0xaff2aaaaaaa638e8,
+            0x439fffee91b55551,
+            0xb535a30cd9377c8c,
+            0x90e144420443a4a2,
+            0x941b66d3814655e2,
+            0x0563998853fead5e,
+        ]),
+    },
+    Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x40aac71c71c725ed,
+            0x190955557a84e38e,
+            0xd817050a8f41abc3,
+            0xd86485d4c87f6fb1,
+            0x696eb479f885d059,
+            0x198e1a74328002d2,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+        ]),
+    },
+];
+
+/// Coefficients of the 3-isogeny x map's denominator
+const XDEN: [Fp2; 3] = [
+    Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x1f3affffff13ab97,
+            0xf25bfc611da3ff3e,
+            0xca3757cb3819b208,
+            0x3e6427366f8cec18,
+            0x03977bc86095b089,
+            0x04f69db13f39a952,
+        ]),
+    },
+    Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x447600000027552e,
+            0xdcb8009a43480020,
+            0x6f7ee9ce4a6e8b59,
+            0xb10330b7c0a95bc6,
+            0x6140b1fcfb1e54b7,
+            0x0381be097f0bb4e1,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x7588ffffffd8557d,
+            0x41f3ff646e0bffdf,
+            0xf7b1e8d2ac426aca,
+            0xb3741acd32dbb6f8,
+            0xe9daf5b9482d581f,
+            0x167f53e0ba7431b8,
+        ]),
+    },
+    Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x760900000002fffd,
+            0xebf4000bc40c0002,
+            0x5f48985753c758ba,
+            0x77ce585370525745,
+            0x5c071a97a256ec6d,
+            0x15f65ec3fa80e493,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+        ]),
+    },
+];
+
+/// Coefficients of the 3-isogeny y map's numerator
+const YNUM: [Fp2; 4] = [
+    Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x96d8f684bdfc77be,
+            0xb530e4f43b66d0e2,
+            0x184a88ff379652fd,
+            0x57cb23ecfae804e1,
+            0x0fd2e39eada3eba9,
+            0x08c8055e31c5d5c3,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x96d8f684bdfc77be,
+            0xb530e4f43b66d0e2,
+            0x184a88ff379652fd,
+            0x57cb23ecfae804e1,
+            0x0fd2e39eada3eba9,
+            0x08c8055e31c5d5c3,
+        ]),
+    },
+    Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0xbf0a71c71c91b406,
+            0x4d6d55d28b7638fd,
+            0x9d82f98e5f205aee,
+            0xa27aa27b1d1a18d5,
+            0x02c3b2b2d2938e86,
+            0x0c7d13420b09807f,
+        ]),
+    },
+    Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0xd7f9555555531c74,
+            0x21cffff748daaaa8,
+            0x5a9ad1866c9bbe46,
+            0x4870a2210221d251,
+            0x4a0db369c0a32af1,
+            0x02b1ccc429ff56af,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0xe205aaaaaaac8e37,
+            0xfcdc000768795556,
+            0x0c96011a8a1537dd,
+            0x1c06a963f163406e,
+            0x010df44c82a881e6,
+            0x174f45260f808feb,
+        ]),
+    },
+    Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0xa470bda12f67f35c,
+            0xc0fe38e23327b425,
+            0xc9d3d0f2c6f0678d,
+            0x1c55c9935b5a982e,
+            0x27f6c0e2f0746764,
+            0x117c5e6e28aa9054,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+        ]),
+    },
+];
+
+/// Coefficients of the 3-isogeny y map's denominator
+const YDEN: [Fp2; 4] = [
+    Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x0162fffffa765adf,
+            0x8f7bea480083fb75,
+            0x561b3c2259e93611,
+            0x11e19fc1a9c875d5,
+            0xca713efc00367660,
+            0x03c6a03d41da1151,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x0162fffffa765adf,
+            0x8f7bea480083fb75,
+            0x561b3c2259e93611,
+            0x11e19fc1a9c875d5,
+            0xca713efc00367660,
+            0x03c6a03d41da1151,
+        ]),
+    },
+    Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x5db0fffffd3b02c5,
+            0xd713f52358ebfdba,
+            0x5ea60761a84d161a,
+            0xbb2c75a34ea6c44a,
+            0x0ac6735921c1119b,
+            0x0ee3d913bdacfbf6,
+        ]),
+    },
+    Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x66b10000003affc5,
+            0xcb1400e764ec0030,
+            0xa73e5eb56fa5d106,
+            0x8984c913a0fe09a9,
+            0x11e10afb78ad7f13,
+            0x05429d0e3e918f52,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x534dffffffc4aae6,
+            0x5397ff174c67ffcf,
+            0xbff273eb870b251d,
+            0xdaf2827152870915,
+            0x393a9cbaca9e2dc3,
+            0x14be74dbfaee5748,
+        ]),
+    },
+    Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x760900000002fffd,
+            0xebf4000bc40c0002,
+            0x5f48985753c758ba,
+            0x77ce585370525745,
+            0x5c071a97a256ec6d,
+            0x15f65ec3fa80e493,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+        ]),
+    },
+];
+
+impl IsogenyMap for G2Projective {
+    fn isogeny_map(&mut self) {
+        self.eval_iso([&XNUM[..], &XDEN[..], &YNUM[..], &YDEN[..]]);
     }
 }
 
@@ -2093,4 +2450,208 @@ fn test_batch_normalize() {
             }
         }
     }
+}
+
+#[test]
+fn test_projective_iso3_zero() {
+    let zero = Fp2::zero();
+    let mut pt = G2Projective {
+        x: Fp2::zero(),
+        y: Fp2::zero(),
+        z: Fp2::zero(),
+    };
+    pt.isogeny_map();
+    assert_eq!(pt.x, zero);
+    assert_eq!(pt.y, zero);
+    assert_eq!(pt.z, zero);
+}
+
+#[test]
+fn test_projective_iso3_one() {
+    let mut pt = G2Projective {
+        x: Fp2::one(),
+        y: Fp2::one(),
+        z: Fp2::one(),
+    };
+    pt.isogeny_map();
+
+    let x_expect = Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0xa1ff04e965c052f7,
+            0x8c0695897df45759,
+            0x4a0c6d98f9827d8e,
+            0x21027cdfae0d645f,
+            0xb5e92070a93eaf45,
+            0x1399610cbf7c03f6,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0xe74fe427c59b26d3,
+            0xbfed31938f71a5f8,
+            0x6cfde1581c39440c,
+            0xc1cfbb49891312b1,
+            0x29494ed34d41e3a4,
+            0xc1440652d20ad38,
+        ]),
+    };
+    let y_expect = Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x3750b9650a5c0027,
+            0xc5d514dfc5dd020b,
+            0xc443f6d863fdc1d0,
+            0xaba47dc61063acda,
+            0x3735d2ad1828297c,
+            0x3d92e322ddd1546,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x5c03ad8189ee30b3,
+            0x4bcc0381ebff703c,
+            0x99c5d71c36143210,
+            0x78d4e700f9755e56,
+            0x765e682f5ef28699,
+            0x13bdc15e946f592,
+        ]),
+    };
+    let z_expect = Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0xa42efffcee12bc9b,
+            0xa65ff59929917b3f,
+            0xc21ff4b4b0b381e2,
+            0x5fb3bda305408f57,
+            0xf0b50564af233bd7,
+            0x14d1239f8795d97c,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x72500014db5b249,
+            0x5291cceeadd11c4,
+            0x2e5a2a2265f930d9,
+            0x47739957775dfd8,
+            0x23915855f39cd08,
+            0xecb8e5093d25c04,
+        ]),
+    };
+    assert_eq!(pt.x, x_expect);
+    assert_eq!(pt.y, y_expect);
+    assert_eq!(pt.z, z_expect);
+}
+
+#[test]
+fn test_projective_iso3_fixed() {
+    let xi = Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x2b4f1b0418ec2ab9,
+            0x8ccfc3bd38b8b1bd,
+            0x160d21c60264b158,
+            0x44d11146d827540,
+            0xe9a1ff8efbfa3e55,
+            0x2790421956b94db,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0xf53130c2f21627e9,
+            0x8bf41fb299f22777,
+            0x22de3385337eef77,
+            0xa3d650b28238d936,
+            0xc26ac36ef74be788,
+            0x6b0de5801bcdb55,
+        ]),
+    };
+    let yi = Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x8c3478d244e73a1e,
+            0x9ad80eaea2847ef,
+            0xa009d2c6a19c4d7c,
+            0xad14ea37d3caa2e6,
+            0xf4d4bfd1cd09cd5e,
+            0x633ac7191e6e1cd,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0xa242b42d478776e5,
+            0x3474f7bb939b1fde,
+            0xca9317dcdf327fbb,
+            0x92c8b4def6629d23,
+            0xf3db74fd5208df9e,
+            0xc3ff42813809dbe,
+        ]),
+    };
+    let zi = Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x396e3a171d3682eb,
+            0x9d8a8a66679bed76,
+            0xd149d6008a42ad3c,
+            0x642a4f268fc07724,
+            0xfe94535d55e01ead,
+            0x17ee1dc7f35478ab,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0xaec2bbaef501dcc,
+            0xf647afeae70603a1,
+            0x268aeee6dc5d1d38,
+            0xc9a8fe231d8fec6b,
+            0xbbfb6687b11e9507,
+            0x8f1b25b6b4c4d0e,
+        ]),
+    };
+    let mut pt = G2Projective {
+        x: xi,
+        y: yi,
+        z: zi,
+    };
+    pt.isogeny_map();
+
+    let x_expect = Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0xaa51c0e1180b0d57,
+            0x28b0e686761afc8c,
+            0x19ff407a3a484438,
+            0x63ea8ff9abf6fddf,
+            0x5c6aa531d2636d17,
+            0x185badd0900f1073,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x6ac4e087d0ba1981,
+            0x37118ac6f0aa47f6,
+            0x1ee51ba02ed89f1f,
+            0xb7d4b12c8096b32,
+            0x27bb5e93c6038b03,
+            0x184c84a00727706,
+        ]),
+    };
+    let y_expect = Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x8c76ec95e02f5d6a,
+            0x5d31fde09b3d4d4e,
+            0xa4e17e369860ac14,
+            0xda389b35e29b699a,
+            0xe67fa8059a237afa,
+            0x1220f324257645f7,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x2fdab2cdbc61a883,
+            0x5dcf5ada26fc9714,
+            0x995cd083b242fec6,
+            0xa0079db2fc99f60b,
+            0xe01e053554e727bb,
+            0x55a9d8217bab54f,
+        ]),
+    };
+    let z_expect = Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x74daa669f740f9f2,
+            0x283671a4e6a1c8f,
+            0x14230a1fecab7ad9,
+            0xb34dce82bd2eb9dd,
+            0x866e706af63aef04,
+            0x252ef31770c147d,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0xc1b8083edd204658,
+            0xa9c56c859e3d920c,
+            0x1e0b5d8a59b68688,
+            0x60d10c39c8c72e4e,
+            0x948f508d12a11262,
+            0xb7e31697882943e,
+        ]),
+    };
+    assert_eq!(pt.x, x_expect);
+    assert_eq!(pt.y, y_expect);
+    assert_eq!(pt.z, z_expect);
 }

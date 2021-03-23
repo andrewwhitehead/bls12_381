@@ -17,12 +17,23 @@ pub struct Fp([u64; 6]);
 
 impl fmt::Debug for Fp {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let tmp = self.to_bytes();
-        write!(f, "0x")?;
-        for &b in tmp.iter() {
-            write!(f, "{:02x}", b)?;
+        if f.alternate() {
+            f.debug_tuple("Fp")
+                .field(&format_args!("{:#x?}", self.0[0]))
+                .field(&format_args!("{:#x?}", self.0[1]))
+                .field(&format_args!("{:#x?}", self.0[2]))
+                .field(&format_args!("{:#x?}", self.0[3]))
+                .field(&format_args!("{:#x?}", self.0[4]))
+                .field(&format_args!("{:#x?}", self.0[5]))
+                .finish()
+        } else {
+            let tmp = self.to_bytes();
+            write!(f, "0x")?;
+            for &b in tmp.iter() {
+                write!(f, "{:02x}", b)?;
+            }
+            Ok(())
         }
-        Ok(())
     }
 }
 
@@ -299,6 +310,11 @@ impl Fp {
     /// canonical.
     pub const fn from_raw_unchecked(v: [u64; 6]) -> Fp {
         Fp(v)
+    }
+
+    /// Returns the raw internal representation of the `Fp` instance.
+    pub const fn to_raw(&self) -> [u64; 6] {
+        self.0
     }
 
     /// Although this is labeled "vartime", it is only
