@@ -238,8 +238,11 @@ impl Fp {
     pub(crate) fn random(mut rng: impl RngCore) -> Fp {
         let mut bytes = [0u8; 96];
         rng.fill_bytes(&mut bytes);
+        Self::from_bytes_wide(&bytes)
+    }
 
-        // Parse the random bytes as a big-endian number, to match Fp encoding order.
+    pub(crate) fn from_bytes_wide(bytes: &[u8; 96]) -> Fp {
+        // Parse the bytes as a big-endian number, to match Fp encoding order.
         Fp::from_u768([
             u64::from_be_bytes(<[u8; 8]>::try_from(&bytes[0..8]).unwrap()),
             u64::from_be_bytes(<[u8; 8]>::try_from(&bytes[8..16]).unwrap()),
@@ -273,6 +276,7 @@ impl Fp {
         // constant `R2` or `R3`.
         let d1 = Fp([limbs[11], limbs[10], limbs[9], limbs[8], limbs[7], limbs[6]]);
         let d0 = Fp([limbs[5], limbs[4], limbs[3], limbs[2], limbs[1], limbs[0]]);
+        // println!("d1 {:?}\nd0 {:?}\n{:?}", d1, d0, limbs);
         // Convert to Montgomery form
         d0 * R2 + d1 * R3
     }
@@ -611,6 +615,16 @@ impl Fp {
 
         Self::montgomery_reduce(t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11)
     }
+
+    /// Returns the sign of a center lifted element over the integer ring
+    /// https://tools.ietf.org/html/draft-irtf-cfrg-hash-to-curve-10#section-4.1
+    #[inline]
+    pub fn sgn0(&self) -> Choice {
+        let tmp = Fp::montgomery_reduce(
+            self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5], 0, 0, 0, 0, 0, 0,
+        );
+        Choice::from((tmp.0[0] & 1) as u8)
+    }
 }
 
 #[test]
@@ -929,4 +943,11 @@ fn test_lexicographic_largest() {
         ])
         .lexicographically_largest()
     ));
+}
+
+#[test]
+fn test_sgn0() {
+    assert_eq!(bool::from(Fp::zero().sgn0()), false);
+    assert_eq!(bool::from(Fp::one().sgn0()), true);
+    assert_eq!(bool::from(Fp::zero().neg().sgn0()), false);
 }

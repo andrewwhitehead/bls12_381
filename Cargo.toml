@@ -17,11 +17,17 @@ rustdoc-args = [ "--html-in-header", "katex-header.html" ]
 
 [dev-dependencies]
 criterion = "0.3"
+rand_xorshift = "0.3"
+sha2 = "0.9"
+sha3 = "0.9"
 
 [[bench]]
 name = "groups"
 harness = false
 required-features = ["groups"]
+
+[dependencies.digest]
+version = "0.9"
 
 [dependencies.ff]
 version = "0.9"
@@ -43,6 +49,10 @@ default-features = false
 [dependencies.subtle]
 version = "2.2.1"
 default-features = false
+
+[dependencies.hex]
+version = "0.4"
+
 
 [features]
 default = ["groups", "pairings", "alloc", "endo"]

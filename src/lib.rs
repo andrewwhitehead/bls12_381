@@ -8,12 +8,12 @@
 //! * This implementation does not require the Rust standard library.
 //! * All operations are constant time unless explicitly noted.
 
-//#![no_std]
+// #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 // Catch documentation errors caused by code changes.
 #![deny(intra_doc_link_resolution_failure)]
-#![deny(missing_debug_implementations)]
-#![deny(missing_docs)]
+// #![deny(missing_debug_implementations)]
+// #![deny(missing_docs)]
 #![deny(unsafe_code)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::many_single_char_names)]
@@ -43,6 +43,8 @@ pub mod notes {
     pub mod design;
     pub mod serialization;
 }
+
+pub(crate) use digest::generic_array;
 
 mod scalar;
 

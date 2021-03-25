@@ -15,7 +15,14 @@ pub struct Fp2 {
 
 impl fmt::Debug for Fp2 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?} + {:?}*u", self.c0, self.c1)
+        if f.alternate() {
+            f.debug_struct("Fp2")
+                .field("c0", &self.c0)
+                .field("c1", &self.c1)
+                .finish()
+        } else {
+            write!(f, "{:?} + {:?}*u", self.c0, self.c1)
+        }
     }
 }
 
@@ -338,6 +345,35 @@ impl Fp2 {
             }
         }
         res
+    }
+
+    /// Vartime exponentiation for larger exponents, only
+    /// used in testing and not exposed through the public API.
+    pub fn pow_vartime_extended(&self, by: &[u64]) -> Self {
+        let mut res = Self::one();
+        for e in by.iter().rev() {
+            for i in (0..64).rev() {
+                res = res.square();
+
+                if ((*e >> i) & 1) == 1 {
+                    res *= self;
+                }
+            }
+        }
+        res
+    }
+
+    /// Returns the sign of a center lifted element over the integer ring
+    /// https://tools.ietf.org/html/draft-irtf-cfrg-hash-to-curve-10#section-4.1
+    pub fn sgn0(&self) -> Choice {
+        let sign_0 = self.c0.sgn0();
+        let zero_0 = self.c0.is_zero();
+        let sign_1 = self.c1.sgn0();
+        sign_0 ^ (zero_0 & sign_1)
+    }
+
+    pub const fn double(&self) -> Fp2 {
+        self.add(self)
     }
 }
 
@@ -872,4 +908,11 @@ fn test_lexicographic_largest() {
         }
         .lexicographically_largest()
     ));
+}
+
+#[test]
+fn test_sgn0() {
+    assert_eq!(bool::from(Fp2::zero().sgn0()), false);
+    assert_eq!(bool::from(Fp2::one().sgn0()), true);
+    assert_eq!(bool::from(Fp2::zero().neg().sgn0()), false);
 }
