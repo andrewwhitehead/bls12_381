@@ -2,7 +2,7 @@ use subtle::{ConditionallyNegatable, ConditionallySelectable, ConstantTimeEq};
 
 use super::chain::{chain_h2_eff, chain_p2m9div16};
 use super::MessageToField;
-use crate::{fp::Fp, fp2::Fp2, g2::G2Projective};
+use crate::{fp::Fp, fp2::Fp2, g2::G2Projective, G2Affine};
 use crate::{
     generic_array::{
         typenum::{U128, U64},
@@ -32,14 +32,7 @@ const XNUM: [Fp2; 4] = [
         ]),
     },
     Fp2 {
-        c0: Fp::from_raw_unchecked([
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-        ]),
+        c0: Fp::zero(),
         c1: Fp::from_raw_unchecked([
             0x5fe55555554c71d0,
             0x873fffdd236aaaa3,
@@ -76,28 +69,14 @@ const XNUM: [Fp2; 4] = [
             0x696eb479f885d059,
             0x198e1a74328002d2,
         ]),
-        c1: Fp::from_raw_unchecked([
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-        ]),
+        c1: Fp::zero(),
     },
 ];
 
 /// Coefficients of the 3-isogeny x map's denominator
 const XDEN: [Fp2; 3] = [
     Fp2 {
-        c0: Fp::from_raw_unchecked([
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-        ]),
+        c0: Fp::zero(),
         c1: Fp::from_raw_unchecked([
             0x1f3affffff13ab97,
             0xf25bfc611da3ff3e,
@@ -125,24 +104,7 @@ const XDEN: [Fp2; 3] = [
             0x167f53e0ba7431b8,
         ]),
     },
-    Fp2 {
-        c0: Fp::from_raw_unchecked([
-            0x760900000002fffd,
-            0xebf4000bc40c0002,
-            0x5f48985753c758ba,
-            0x77ce585370525745,
-            0x5c071a97a256ec6d,
-            0x15f65ec3fa80e493,
-        ]),
-        c1: Fp::from_raw_unchecked([
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-        ]),
-    },
+    Fp2::one(),
 ];
 
 /// Coefficients of the 3-isogeny y map's numerator
@@ -166,14 +128,7 @@ const YNUM: [Fp2; 4] = [
         ]),
     },
     Fp2 {
-        c0: Fp::from_raw_unchecked([
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-        ]),
+        c0: Fp::zero(),
         c1: Fp::from_raw_unchecked([
             0xbf0a71c71c91b406,
             0x4d6d55d28b7638fd,
@@ -210,14 +165,7 @@ const YNUM: [Fp2; 4] = [
             0x27f6c0e2f0746764,
             0x117c5e6e28aa9054,
         ]),
-        c1: Fp::from_raw_unchecked([
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-        ]),
+        c1: Fp::zero(),
     },
 ];
 
@@ -242,14 +190,7 @@ const YDEN: [Fp2; 4] = [
         ]),
     },
     Fp2 {
-        c0: Fp::from_raw_unchecked([
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-        ]),
+        c0: Fp::zero(),
         c1: Fp::from_raw_unchecked([
             0x5db0fffffd3b02c5,
             0xd713f52358ebfdba,
@@ -277,35 +218,11 @@ const YDEN: [Fp2; 4] = [
             0x14be74dbfaee5748,
         ]),
     },
-    Fp2 {
-        c0: Fp::from_raw_unchecked([
-            0x760900000002fffd,
-            0xebf4000bc40c0002,
-            0x5f48985753c758ba,
-            0x77ce585370525745,
-            0x5c071a97a256ec6d,
-            0x15f65ec3fa80e493,
-        ]),
-        c1: Fp::from_raw_unchecked([
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-            0x0000000000000000,
-        ]),
-    },
+    Fp2::one(),
 ];
 
 const ELLP_A: Fp2 = Fp2 {
-    c0: Fp::from_raw_unchecked([
-        0x0000000000000000u64,
-        0x0000000000000000u64,
-        0x0000000000000000u64,
-        0x0000000000000000u64,
-        0x0000000000000000u64,
-        0x0000000000000000u64,
-    ]),
+    c0: Fp::zero(),
     c1: Fp::from_raw_unchecked([
         0xe53a000003135242u64,
         0x01080c0fdef80285u64,
@@ -370,8 +287,14 @@ impl MessageToField for G2Projective {
 
     /// Default isogeny evaluation function.
     fn isogeny_map(&mut self) {
+        println!("isogen in: {:?}", G2Affine::from(&*self));
         // self.eval_iso([&XNUM[..], &XDEN[..], &YNUM[..], &YDEN[..]]);
         *self = self.map_isogeny([&XNUM[..], &XDEN[..], &YNUM[..], &YDEN[..]]);
+        let aff = crate::G2Affine::from(&*self);
+        println!("===");
+        println!("isogen: {:?}", aff);
+        println!("on curve: {:?}", aff.is_on_curve());
+        println!("===");
     }
 
     fn osswu_map(u: &Fp2) -> Self {
@@ -445,6 +368,8 @@ impl MessageToField for G2Projective {
             ]),
         };
 
+        // https://github.com/paulmillr/noble-bls12-381/blob/2fc8a17a2f92c128b610e5578c6552df26270913/math.js#L928
+
         let mut tmp1 = u.square();
         let tmp3 = XI * tmp1;
         let mut tmp5 = tmp3.square();
@@ -501,11 +426,23 @@ impl MessageToField for G2Projective {
         let xn = Fp2::conditional_select(&tmp2, &x1n, e8); // choose correct x-coordinate
         y.conditional_negate(u.sgn0() ^ y.sgn0()); // fix sign of y
 
-        G2Projective {
+        let mut tmp = G2Projective {
             x: xn,
             y: y * xd,
             z: xd,
-        }
+        };
+        let aff = G2Affine::from(tmp);
+        println!("===");
+        println!("osswu: {:?}", aff);
+        println!("on curve: {:?}", aff.is_on_curve());
+        println!("===");
+        println!("{:?}", tmp);
+        println!("{:?}", G2Projective::from(&aff));
+        println!("{:?}", G2Projective::from(&aff).ct_eq(&tmp));
+        println!("===");
+
+        tmp
+        // G2Projective::from(&aff)
 
         // let p = ((XI * XI * XI) * (c2 * c3).invert().unwrap()).sqrt();
         // println!("c5: {:#x?}", p);
@@ -611,8 +548,22 @@ impl MessageToField for G2Projective {
     }
 
     fn clear_h(&mut self) {
-        //*self = self.clear_cofactor();
-        *self = chain_h2_eff(&self);
+        let a = G2Affine::from(*self);
+        *self = G2Projective::from(a).clear_cofactor();
+        // *self = chain_h2_eff(&self);
+        // *self = (&*self)
+        //     * crate::Scalar::from_raw([
+        //         0xa40200040001ffffu64,
+        //         0xb116900400069009u64,
+        //         0x0000000000000002u64,
+        //         0x0000000000000000u64,
+        //     ]);
+        // let mut bs = hex::decode(
+        //     "0bc69f08f2ee75b3584c6a0ea91b352888e2a8e9145ad7689986ff031508ffe1329c2f178731db956d82bf015d1212b02ec0ec69d7477c1ae954cbc06689f6a359894c0adebbf6b4e8020005aaa95551",
+        // )
+        // .unwrap();
+        // bs.reverse();
+        // *self = (&*self).multiply(&bs[..]);
     }
 }
 
@@ -637,24 +588,53 @@ fn test_projective_iso3_one() {
         y: Fp2::one(),
         z: Fp2::one(),
     };
+    pt = pt.double();
     pt.isogeny_map();
-    println!("{:#x?}", pt);
-    println!("{:#x?}", crate::g2::G2Affine::from(pt));
-    println!(
-        "{}",
-        hex::encode(&crate::g2::G2Affine::from(pt).to_compressed()[..])
-    );
-    let ptb = pt + pt;
-    pt = pt.double_safe();
-    println!(
-        "{}",
-        hex::encode(&crate::g2::G2Affine::from(pt).to_compressed()[..])
-    );
-    println!(
-        "{}",
-        hex::encode(&crate::g2::G2Affine::from(ptb).to_compressed()[..])
-    );
-    assert!(bool::from(pt.is_on_curve()));
+
+    let aff = crate::g2::G2Affine::from(pt);
+    println!("{:?}", aff);
+    println!("{}", bool::from(aff.is_on_curve()));
+    assert!(false);
+
+    use crate::Scalar;
+    let h_eff = Scalar::from_raw([
+        0xa40200040001ffffu64,
+        0xb116900400069009u64,
+        0x0000000000000002u64,
+        0x0000000000000000u64,
+    ]);
+    println!("h_eff {}", h_eff);
+    println!("h_eff {:?}", h_eff);
+    println!("h_eff+1 {:?}", h_eff + Scalar::from(1));
+
+    let pta = pt.clear_cofactor();
+    let ptb = pt
+        * crate::Scalar::from_raw([
+            0xa40200040001ffffu64,
+            0xb116900400069009u64,
+            0x0000000000000002u64,
+            0x0000000000000000u64,
+        ]);
+    println!("{:#x?}", crate::g2::G2Affine::from(pta));
+    println!("{:#x?}", crate::g2::G2Affine::from(ptb));
+
+    // println!("{:#x?}", pt);
+    // println!("{:#x?}", crate::g2::G2Affine::from(pt));
+    // println!(
+    //     "{}",
+    //     hex::encode(&crate::g2::G2Affine::from(pt).to_compressed()[..])
+    // );
+    // let ptb = pt + pt;
+    // pt = pt.double_safe();
+    // println!(
+    //     "{}",
+    //     hex::encode(&crate::g2::G2Affine::from(pt).to_compressed()[..])
+    // );
+    // println!(
+    //     "{}",
+    //     hex::encode(&crate::g2::G2Affine::from(ptb).to_compressed()[..])
+    // );
+    // assert!(bool::from(pt.is_on_curve()));
 
     let x_expect = Fp2 {
         c0: Fp::from_raw_unchecked([
@@ -943,74 +923,76 @@ fn test_encode_to_curve_07() {
     }
 }
 
-// #[test]
-// fn test_hash_to_curve_07() {
-//     use crate::{ExpandMsgXmd, HashToCurve};
+#[test]
+fn test_hash_to_curve_07() {
+    use crate::hash_to_curve::{ExpandMsgXmd, HashToCurve};
 
-//     struct TestCase {
-//         msg: &'static [u8],
-//         expected: [&'static str; 4],
-//     }
-//     impl TestCase {
-//         fn expected(&self) -> String {
-//             self.expected[0].to_string() + self.expected[1] + self.expected[2] + self.expected[3]
-//         }
-//     }
+    struct TestCase {
+        msg: &'static [u8],
+        expected: [&'static str; 4],
+    }
+    impl TestCase {
+        fn expected(&self) -> String {
+            self.expected[0].to_string() + self.expected[1] + self.expected[2] + self.expected[3]
+        }
+    }
 
-//     const DOMAIN: &[u8] = b"BLS12381G2_XMD:SHA-256_SSWU_RO_TESTGEN";
+    const DOMAIN: &[u8] = b"BLS12381G2_XMD:SHA-256_SSWU_RO_TESTGEN";
 
-//     let cases = vec![
-//         TestCase {
-//             msg: b"",
-//             expected: [
-//         "0fbdae26f9f9586a46d4b0b70390d09064ef2afe5c99348438a3c7d9756471e015cb534204c1b6824617a85024c772dc",
-//         "0a650bd36ae7455cb3fe5d8bb1310594551456f5c6593aec9ee0c03d2f6cb693bd2c5e99d4e23cbaec767609314f51d3",
-//         "02e5cf8f9b7348428cc9e66b9a9b36fe45ba0b0a146290c3a68d92895b1af0e1f2d9f889fb412670ae8478d8abd4c5aa",
-//         "0d8d49e7737d8f9fc5cef7c4b8817633103faf2613016cb86a1f3fc29968fe2413e232d9208d2d74a89bf7a48ac36f83",
-//             ],
-//         },
-//         TestCase {
-//             msg: b"abc",
-//             expected: [
-//         "03578447618463deb106b60e609c6f7cc446dc6035f84a72801ba17c94cd800583b493b948eff0033f09086fdd7f6175",
-//         "1953ce6d4267939c7360756d9cca8eb34aac4633ef35369a7dc249445069888e7d1b3f9d2e75fbd468fbcbba7110ea02",
-//         "0184d26779ae9d4670aca9b267dbd4d3b30443ad05b8546d36a195686e1ccc3a59194aea05ed5bce7c3144a29ec047c4",
-//         "0882ab045b8fe4d7d557ebb59a63a35ac9f3d312581b509af0f8eaa2960cbc5e1e36bb969b6e22980b5cbdd0787fcf4e",
-//             ],
-//         },
-//         TestCase {
-//             msg: b"abcdef0123456789",
-//             expected: [
-//         "195fad48982e186ce3c5c82133aefc9b26d55979b6f530992a8849d4263ec5d57f7a181553c8799bcc83da44847bdc8d",
-//         "17b461fc3b96a30c2408958cbfa5f5927b6063a8ad199d5ebf2d7cdeffa9c20c85487204804fab53f950b2f87db365aa",
-//         "005cdf3d984e3391e7e969276fb4bc02323c5924a4449af167030d855acc2600cf3d4fab025432c6d868c79571a95bef",
-//         "174a3473a3af2d0302b9065e895ca4adba4ece6ce0b41148ba597001abb152f852dd9a96fb45c9de0a43d944746f833e",
-//             ]
-//         },
-//         TestCase {
-//             msg: b"a512_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
-//                    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
-//                    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
-//                    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
-//                    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
-//                    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
-//                    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
-//                    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
-//                    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
-//                    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-//             expected: [
-//         "123b6bd9feeba26dd4ad00f8bfda2718c9700dc093ea5287d7711844644eb981848316d3f3f57d5d3a652c6cdc816aca",
-//         "0a162306f3b0f2bb326f0c4fb0e1fea020019c3af796dcd1d7264f50ddae94cacf3cade74603834d44b9ab3d5d0a6c98",
-//         "05483f3b96d9252dd4fc0868344dfaf3c9d145e3387db23fa8e449304fab6a7b6ec9c15f05c0a1ea66ff0efcc03e001a",
-//         "15c1d4f1a685bb63ee67ca1fd96155e3d091e852a684b78d085fd34f6091e5249ddddbdcf2e7ec82ce6c04c63647eeb7",
-//             ]
-//         }
-//     ];
+    let cases = vec![
+        TestCase {
+            msg: b"",
+            expected: [
+        "0fbdae26f9f9586a46d4b0b70390d09064ef2afe5c99348438a3c7d9756471e015cb534204c1b6824617a85024c772dc",
+        "0a650bd36ae7455cb3fe5d8bb1310594551456f5c6593aec9ee0c03d2f6cb693bd2c5e99d4e23cbaec767609314f51d3",
+        "02e5cf8f9b7348428cc9e66b9a9b36fe45ba0b0a146290c3a68d92895b1af0e1f2d9f889fb412670ae8478d8abd4c5aa",
+        "0d8d49e7737d8f9fc5cef7c4b8817633103faf2613016cb86a1f3fc29968fe2413e232d9208d2d74a89bf7a48ac36f83",
+            ],
+        },
+        TestCase {
+            msg: b"abc",
+            expected: [
+        "03578447618463deb106b60e609c6f7cc446dc6035f84a72801ba17c94cd800583b493b948eff0033f09086fdd7f6175",
+        "1953ce6d4267939c7360756d9cca8eb34aac4633ef35369a7dc249445069888e7d1b3f9d2e75fbd468fbcbba7110ea02",
+        "0184d26779ae9d4670aca9b267dbd4d3b30443ad05b8546d36a195686e1ccc3a59194aea05ed5bce7c3144a29ec047c4",
+        "0882ab045b8fe4d7d557ebb59a63a35ac9f3d312581b509af0f8eaa2960cbc5e1e36bb969b6e22980b5cbdd0787fcf4e",
+            ],
+        },
+        TestCase {
+            msg: b"abcdef0123456789",
+            expected: [
+        "195fad48982e186ce3c5c82133aefc9b26d55979b6f530992a8849d4263ec5d57f7a181553c8799bcc83da44847bdc8d",
+        "17b461fc3b96a30c2408958cbfa5f5927b6063a8ad199d5ebf2d7cdeffa9c20c85487204804fab53f950b2f87db365aa",
+        "005cdf3d984e3391e7e969276fb4bc02323c5924a4449af167030d855acc2600cf3d4fab025432c6d868c79571a95bef",
+        "174a3473a3af2d0302b9065e895ca4adba4ece6ce0b41148ba597001abb152f852dd9a96fb45c9de0a43d944746f833e",
+            ]
+        },
+        TestCase {
+            msg: b"a512_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
+                   aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
+                   aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
+                   aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
+                   aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
+                   aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
+                   aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
+                   aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
+                   aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
+                   aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            expected: [
+        "123b6bd9feeba26dd4ad00f8bfda2718c9700dc093ea5287d7711844644eb981848316d3f3f57d5d3a652c6cdc816aca",
+        "0a162306f3b0f2bb326f0c4fb0e1fea020019c3af796dcd1d7264f50ddae94cacf3cade74603834d44b9ab3d5d0a6c98",
+        "05483f3b96d9252dd4fc0868344dfaf3c9d145e3387db23fa8e449304fab6a7b6ec9c15f05c0a1ea66ff0efcc03e001a",
+        "15c1d4f1a685bb63ee67ca1fd96155e3d091e852a684b78d085fd34f6091e5249ddddbdcf2e7ec82ce6c04c63647eeb7",
+            ]
+        }
+    ];
 
-//     for case in cases {
-//         let g = <G2 as HashToCurve<ExpandMsgXmd<sha2::Sha256>>>::hash_to_curve(&case.msg, DOMAIN);
-//         let g_uncompressed = g.into_affine().into_uncompressed();
+    for case in cases {
+        let g = <G2Projective as HashToCurve<ExpandMsgXmd<sha2::Sha256>>>::hash_to_curve(
+            &case.msg, DOMAIN,
+        );
+        let g_uncompressed = G2Affine::from(g).to_uncompressed();
 
-//         assert_eq!(case.expected(), hex::encode(&g_uncompressed.0[..]));
-//     }
-// }
+        assert_eq!(case.expected(), hex::encode(&g_uncompressed[..]));
+    }
+}

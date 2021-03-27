@@ -873,10 +873,10 @@ impl G1Projective {
         // compute map value by Horner's rule
         for idx in 0..4 {
             let coeff = coeffs[idx];
-            let clen = coeff.len() - 1;
-            mapvals[idx] = coeff[clen];
-            for jdx in 0..clen {
-                mapvals[idx] = mapvals[idx] * x + zpows[jdx] * coeff[clen - 1 - jdx];
+            let clast = coeff.len() - 1;
+            mapvals[idx] = coeff[clast];
+            for jdx in 0..clast {
+                mapvals[idx] = mapvals[idx] * x + zpows[jdx] * coeff[clast - 1 - jdx];
             }
             // cmpvals[idx] = coeff[0];
             // let mut cx = x;
@@ -886,9 +886,12 @@ impl G1Projective {
             // }
         }
 
+        // x denominator is order 1 less than x numerator, so we need an extra factor of z
+        mapvals[1] *= z;
+
         // multiply result of Y map by the y-coord, y / z
         mapvals[2] *= y;
-        // mapvals[3] *= z;
+        mapvals[3] *= z;
 
         // homogeneous coordinates of resulting point
         G1Projective {

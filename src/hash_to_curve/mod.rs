@@ -52,11 +52,16 @@ where
         let mut p = {
             let mut u = [F::Pt::default(); 2];
             hash_to_field::<F, X>(message.as_ref(), dst, &mut u);
+            // note: draft 10 performs isogeny_map for each component,
+            // draft 7 performs one after adding the two. but adding two components
+            // which aren't on the curve does not produce the expected result.
             let mut tmp = F::osswu_map(&u[0]);
-            tmp.add_assign(&F::osswu_map(&u[1]));
+            tmp.isogeny_map();
+            let mut t2 = F::osswu_map(&u[1]);
+            t2.isogeny_map();
+            tmp.add_assign(&t2);
             tmp
         };
-        p.isogeny_map();
         p.clear_h();
         p
     }

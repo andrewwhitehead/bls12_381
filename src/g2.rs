@@ -4,6 +4,7 @@ use core::borrow::Borrow;
 use core::fmt;
 use core::iter::Sum;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use digest::{consts::U128, generic_array::GenericArray};
 use group::{
     prime::{PrimeCurve, PrimeCurveAffine, PrimeGroup},
     Curve, Group, GroupEncoding, UncompressedEncoding,
@@ -631,7 +632,11 @@ impl_binops_multiplicative_mixed!(G2Affine, Scalar, G2Projective);
 
 #[inline(always)]
 fn mul_by_3b(x: Fp2) -> Fp2 {
-    x * B3
+    let t = x.mul_by_nonresidue();
+    Fp2 {
+        c0: B3.c0 * t.c0,
+        c1: B3.c1 * t.c1,
+    }
 }
 
 impl G2Projective {
@@ -660,6 +665,39 @@ impl G2Projective {
         }
     }
 
+    pub fn double_safe(&self) -> G2Projective {
+        let G2Projective { x, y, z } = *self;
+
+        let t0 = x.square();
+        let w = t0 + t0 + t0;
+        let s = y * z;
+        let b = x * y * s;
+        let b2 = b + b;
+        let b4 = b2 + b2;
+        let b8 = b4 + b4;
+        let h = w.square() - b8;
+        let s2 = s.square();
+        let x3 = h * s;
+        let x3 = x3 + x3;
+        let t1 = y.square();
+        let t2 = t1 + t1;
+        let t3 = t2 + t2;
+        let t4 = t3 + t3;
+        let y3 = w * (b4 - h) - t4 * s2;
+        let t5 = s + s;
+        let t6 = t5 + t5;
+        let t7 = t6 + t6;
+        let z3 = t7 * s2;
+
+        println!("x: {:?}\ny: {:?}\nz: {:?}", x3, y3, z3);
+        let tmp = G2Projective {
+            x: x3,
+            y: y3,
+            z: z3,
+        };
+        G2Projective::conditional_select(&tmp, &G2Projective::identity(), self.is_identity())
+    }
+
     /// Computes the doubling of this point.
     pub fn double(&self) -> G2Projective {
         // Algorithm 9, https://eprint.iacr.org/2015/1060.pdf
@@ -682,6 +720,8 @@ impl G2Projective {
         let t1 = self.x * self.y;
         let x3 = t0 * t1;
         let x3 = x3 + x3;
+
+        // println!("x: {:?}\ny: {:?}\nz: {:?}", x3, y3, z3);
 
         let tmp = G2Projective {
             x: x3,
@@ -814,7 +854,7 @@ impl G2Projective {
         G2Projective::conditional_select(&tmp, &self, rhs.is_identity())
     }
 
-    fn multiply(&self, by: &[u8]) -> G2Projective {
+    pub fn multiply(&self, by: &[u8]) -> G2Projective {
         let mut acc = G2Projective::identity();
 
         // This is a simple double-and-add implementation of point
@@ -926,30 +966,6 @@ impl G2Projective {
         xself
     }
 
-    pub fn double_safe(&self) -> G2Projective {
-        // http://www.hyperelliptic.org/EFD/g1p/auto-shortw-projective.html
-        // dbl-2007-bl
-        let G2Projective { x, y, z } = *self;
-        let xx = x.square();
-        // let zz = z.square();
-        let w = xx + xx + xx;
-        let s = (y * z) + (y * z);
-        let ss = s.square();
-        let sss = s * ss;
-        let r = y * s;
-        let rr = r.square();
-        let b = (x + r).square() - x - r;
-        let h = w.square() - b - b;
-        let x3 = h * s;
-        let y3 = w * (b - h) - rr - rr;
-        let z3 = sss;
-        G2Projective {
-            x: x3,
-            y: y3,
-            z: z3,
-        }
-    }
-
     /// Clears the cofactor, using [Budroni-Pintore](https://ia.cr/2017/419).
     /// This is equivalent to multiplying by $h\_\textrm{eff} = 3(z^2 - 1) \cdot
     /// h_2$, where $h_2$ is the cofactor of $\mathbb{G}\_2$ and $z$ is the
@@ -958,42 +974,42 @@ impl G2Projective {
     /// The endomorphism is only actually used if the crate feature `endo` is
     /// enabled, which it is by default.
     pub fn clear_cofactor(&self) -> G2Projective {
-        const H2: &[u8] = &[
-            0xff, 0xff, 0x01, 0x00, 0x04, 0x00, 0x02, 0xa4, 0x09, 0x90, 0x06, 0x00, 0x04, 0x90,
-            0x16, 0xb1, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00,
-        ];
-        // This is a simple double-and-add implementation of point
-        // multiplication, moving from most significant to least
-        // significant bit of the scalar.
-        //
-        // We skip the leading bit because it's always unset for Fq
-        // elements.
-        let mut acc = *self;
-        for bit in H2
-            .iter()
-            .rev()
-            .flat_map(|byte| (0..8).rev().map(move |i| Choice::from((byte >> i) & 1u8)))
-            .skip(1)
-        {
-            acc = acc.double_safe();
-            acc = G2Projective::conditional_select(&acc, &(acc + self), bit);
-        }
-        return acc;
+        // const H2: &[u8] = &[
+        //     0xff, 0xff, 0x01, 0x00, 0x04, 0x00, 0x02, 0xa4, 0x09, 0x90, 0x06, 0x00, 0x04, 0x90,
+        //     0x16, 0xb1, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        //     0x00, 0x00, 0x00, 0x00,
+        // ];
+        // // This is a simple double-and-add implementation of point
+        // // multiplication, moving from most significant to least
+        // // significant bit of the scalar.
+        // //
+        // // We skip the leading bit because it's always unset for Fq
+        // // elements.
+        // let mut acc = *self;
+        // for bit in H2
+        //     .iter()
+        //     .rev()
+        //     .flat_map(|byte| (0..8).rev().map(move |i| Choice::from((byte >> i) & 1u8)))
+        //     .skip(1)
+        // {
+        //     acc = acc.double_safe();
+        //     acc = G2Projective::conditional_select(&acc, &(acc + self), bit);
+        // }
+        // return acc;
 
-        #[cfg(feature = "endo")]
-        fn clear_cofactor(this: &G2Projective) -> G2Projective {
-            let t1 = this.mul_by_x(); // [x] P
-            let t2 = this.psi(); // psi(P)
+        // #[cfg(feature = "endo")]
+        // fn clear_cofactor(this: &G2Projective) -> G2Projective {
+        //     let t1 = this.mul_by_x(); // [x] P
+        //     let t2 = this.psi(); // psi(P)
 
-            this.double().psi2() // psi^2(2P)
-                + (t1 + t2).mul_by_x() // psi^2(2P) + [x^2] P + [x] psi(P)
-                - t1 // psi^2(2P) + [x^2 - x] P + [x] psi(P)
-                - t2 // psi^2(2P) + [x^2 - x] P + [x - 1] psi(P)
-                - this // psi^2(2P) + [x^2 - x - 1] P + [x - 1] psi(P)
-        }
+        //     this.double().psi2() // psi^2(2P)
+        //         + (t1 + t2).mul_by_x() // psi^2(2P) + [x^2] P + [x] psi(P)
+        //         - t1 // psi^2(2P) + [x^2 - x] P + [x] psi(P)
+        //         - t2 // psi^2(2P) + [x^2 - x] P + [x - 1] psi(P)
+        //         - this // psi^2(2P) + [x^2 - x - 1] P + [x - 1] psi(P)
+        // }
 
-        #[cfg(not(feature = "endo"))]
+        // #[cfg(not(feature = "endo"))]
         fn clear_cofactor(this: &G2Projective) -> G2Projective {
             this.multiply(&[
                 0x51, 0x55, 0xa9, 0xaa, 0x5, 0x0, 0x2, 0xe8, 0xb4, 0xf6, 0xbb, 0xde, 0xa, 0x4c,
@@ -1126,48 +1142,32 @@ impl G2Projective {
 
     /// Generic isogeny evaluation function.
     pub(crate) fn map_isogeny(&self, coeffs: [&[Fp2]; 4]) -> G2Projective {
+        // xnum, xden, ynum, yden
+        let mut mapvals = [Fp2::zero(); 4];
+
         // unpack input point
         let G2Projective { x, y, z } = *self;
 
-        let mut mapvals = [Fp2::zero(); 4];
-
-        // let zpows = {
-        //     let mut zpows = [Fp2::zero(); 3];
-        //     zpows[0] = z;
-        //     for idx in 1..zpows.len() {
-        //         zpows[idx] = zpows[idx - 1] * z;
-        //     }
-        //     zpows
-        // };
-        let zpows = [z, z.square(), z.square() * z];
+        // compute powers of z
+        let zsq = z.square();
+        let zpows = [z, zsq, zsq * z];
 
         // compute map value by Horner's rule
         for idx in 0..4 {
             let coeff = coeffs[idx];
-            let clen = coeff.len() - 1;
-            mapvals[idx] = coeff[clen];
-            for jdx in 0..clen {
-                mapvals[idx] = mapvals[idx] * x + zpows[jdx] * coeff[clen - 1 - jdx];
-                // mapvals[idx] = mapvals[idx] * x * z + coeff[clen - 1 - jdx];
+            let clast = coeff.len() - 1;
+            mapvals[idx] = coeff[clast];
+            for jdx in 0..clast {
+                mapvals[idx] = mapvals[idx] * x + zpows[jdx] * coeff[clast - 1 - jdx];
             }
         }
 
-        // let z2 = z.square();
-        // let z3 = z2 * z;
-
-        // let tmp =
-        //     coeffs[0][3] * (x * x * x) + coeffs[0][2] * x * x + coeffs[0][1] * x + coeffs[0][0];
-        // assert_eq!(tmp, mapvals[0]);
+        // x denominator is order 1 less than x numerator, so we need an extra factor of z
+        mapvals[1] *= z;
 
         // multiply result of Y map by the y-coord, y / z
         mapvals[2] *= y;
         mapvals[3] *= z;
-
-        println!("xn: {:?}", mapvals[0]);
-        println!("xd: {:?}", mapvals[1]);
-        println!("yn: {:?}", mapvals[2]);
-        println!("yd: {:?}", mapvals[3]);
-        println!("z: {:?}", mapvals[1] * mapvals[3]);
 
         // homogeneous coordinates of resulting point
         G2Projective {
@@ -1562,6 +1562,35 @@ fn test_affine_to_projective() {
 
 #[test]
 fn test_doubling() {
+    // use crate::hash_to_curve::MessageToField;
+    // use rand_core::SeedableRng;
+    // const SEED: [u8; 16] = [
+    //     0x59, 0x62, 0xbe, 0x5d, 0x76, 0x3d, 0x31, 0x8d, 0x17, 0xdb, 0x37, 0x32, 0x54, 0x06, 0xbc,
+    //     0xe5,
+    // ];
+    // let mut rng = rand_xorshift::XorShiftRng::from_seed(SEED);
+    // let mut mk_pt = || {
+    //     let mut data = GenericArray::<u8, U128>::default();
+    //     rng.fill_bytes(&mut data);
+    //     G2Projective::input_okm(&data)
+    // };
+    // let mut mk_f = || {
+    //     let mut x = mk_pt();
+    //     let mut y = mk_pt();
+    //     let z = mk_pt();
+    //     let zi = z.invert().unwrap();
+    //     x = x * zi;
+    //     y = y * zi;
+    //     G2Projective { x, y, z }
+    // };
+    // let f = mk_f();
+    // println!("{:?}", G2Affine::from(f));
+    // assert!(false);
+
+    let d1 = G2Projective::generator().double();
+    let d2 = G2Projective::generator().double_safe();
+    assert!(false);
+
     {
         let tmp = G2Projective::identity().double();
         assert!(bool::from(tmp.is_identity()));
