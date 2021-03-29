@@ -1,8 +1,8 @@
-use subtle::{ConditionallyNegatable, ConditionallySelectable, ConstantTimeEq};
+use subtle::{Choice, ConditionallyNegatable, ConditionallySelectable, ConstantTimeEq};
 
-use super::chain::{chain_h2_eff, chain_p2m9div16};
+use super::chain::chain_p2m9div16;
 use super::MessageToField;
-use crate::{fp::Fp, fp2::Fp2, g2::G2Projective, G2Affine};
+use crate::{fp::Fp, fp2::Fp2, g2::G2Projective};
 use crate::{
     generic_array::{
         typenum::{U128, U64},
@@ -12,7 +12,7 @@ use crate::{
 };
 
 /// Coefficients of the 3-isogeny x map's numerator
-const XNUM: [Fp2; 4] = [
+const ISO3_XNUM: [Fp2; 4] = [
     Fp2 {
         c0: Fp::from_raw_unchecked([
             0x47f671c71ce05e62,
@@ -74,7 +74,7 @@ const XNUM: [Fp2; 4] = [
 ];
 
 /// Coefficients of the 3-isogeny x map's denominator
-const XDEN: [Fp2; 3] = [
+const ISO3_XDEN: [Fp2; 3] = [
     Fp2 {
         c0: Fp::zero(),
         c1: Fp::from_raw_unchecked([
@@ -108,7 +108,7 @@ const XDEN: [Fp2; 3] = [
 ];
 
 /// Coefficients of the 3-isogeny y map's numerator
-const YNUM: [Fp2; 4] = [
+const ISO3_YNUM: [Fp2; 4] = [
     Fp2 {
         c0: Fp::from_raw_unchecked([
             0x96d8f684bdfc77be,
@@ -170,7 +170,7 @@ const YNUM: [Fp2; 4] = [
 ];
 
 /// Coefficients of the 3-isogeny y map's denominator
-const YDEN: [Fp2; 4] = [
+const ISO3_YDEN: [Fp2; 4] = [
     Fp2 {
         c0: Fp::from_raw_unchecked([
             0x0162fffffa765adf,
@@ -221,53 +221,147 @@ const YDEN: [Fp2; 4] = [
     Fp2::one(),
 ];
 
-const ELLP_A: Fp2 = Fp2 {
+const SSWU_ELLP_A: Fp2 = Fp2 {
     c0: Fp::zero(),
     c1: Fp::from_raw_unchecked([
-        0xe53a000003135242u64,
-        0x01080c0fdef80285u64,
-        0xe7889edbe340f6bdu64,
-        0x0b51375126310601u64,
-        0x02d6985717c744abu64,
-        0x1220b4e979ea5467u64,
+        0xe53a000003135242,
+        0x01080c0fdef80285,
+        0xe7889edbe340f6bd,
+        0x0b51375126310601,
+        0x02d6985717c744ab,
+        0x1220b4e979ea5467,
     ]),
 };
 
-const ELLP_B: Fp2 = Fp2 {
+const SSWU_ELLP_B: Fp2 = Fp2 {
     c0: Fp::from_raw_unchecked([
-        0x22ea00000cf89db2u64,
-        0x6ec832df71380aa4u64,
-        0x6e1b94403db5a66eu64,
-        0x75bf3c53a79473bau64,
-        0x3dd3a569412c0a34u64,
-        0x125cdb5e74dc4fd1u64,
+        0x22ea00000cf89db2,
+        0x6ec832df71380aa4,
+        0x6e1b94403db5a66e,
+        0x75bf3c53a79473ba,
+        0x3dd3a569412c0a34,
+        0x125cdb5e74dc4fd1,
     ]),
     c1: Fp::from_raw_unchecked([
-        0x22ea00000cf89db2u64,
-        0x6ec832df71380aa4u64,
-        0x6e1b94403db5a66eu64,
-        0x75bf3c53a79473bau64,
-        0x3dd3a569412c0a34u64,
-        0x125cdb5e74dc4fd1u64,
+        0x22ea00000cf89db2,
+        0x6ec832df71380aa4,
+        0x6e1b94403db5a66e,
+        0x75bf3c53a79473ba,
+        0x3dd3a569412c0a34,
+        0x125cdb5e74dc4fd1,
     ]),
 };
 
-const XI: Fp2 = Fp2 {
+const SSWU_XI: Fp2 = Fp2 {
     c0: Fp::from_raw_unchecked([
-        0x87ebfffffff9555cu64,
-        0x656fffe5da8ffffau64,
-        0xfd0749345d33ad2u64,
-        0xd951e663066576f4u64,
-        0xde291a3d41e980d3u64,
-        0x815664c7dfe040du64,
+        0x87ebfffffff9555c,
+        0x656fffe5da8ffffa,
+        0x0fd0749345d33ad2,
+        0xd951e663066576f4,
+        0xde291a3d41e980d3,
+        0x0815664c7dfe040d,
     ]),
     c1: Fp::from_raw_unchecked([
-        0x43f5fffffffcaaaeu64,
-        0x32b7fff2ed47fffdu64,
-        0x7e83a49a2e99d69u64,
-        0xeca8f3318332bb7au64,
-        0xef148d1ea0f4c069u64,
-        0x40ab3263eff0206u64,
+        0x43f5fffffffcaaae,
+        0x32b7fff2ed47fffd,
+        0x07e83a49a2e99d69,
+        0xeca8f3318332bb7a,
+        0xef148d1ea0f4c069,
+        0x040ab3263eff0206,
+    ]),
+};
+
+const SSWU_ETAS: [Fp2; 4] = [
+    Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x05e514668ac736d2,
+            0x9089b4d6b84f3ea5,
+            0x603c384c224a8b32,
+            0xf3257909536afea6,
+            0x5c5cdbabae656d81,
+            0x075bfa0863c987e9,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x338d9bfe08087330,
+            0x7b8e48b2bd83cefe,
+            0x530dad5d306b5be7,
+            0x5a4d7e8e6c408b6d,
+            0x6258f7a6232cab9b,
+            0x0b985811cce14db5,
+        ]),
+    },
+    Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x86716401f7f7377b,
+            0xa31db74bf3d03101,
+            0x14232543c6459a3c,
+            0x0a29ccf687448752,
+            0xe8c2b010201f013c,
+            0x0e68b9d86c9e98e4,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x05e514668ac736d2,
+            0x9089b4d6b84f3ea5,
+            0x603c384c224a8b32,
+            0xf3257909536afea6,
+            0x5c5cdbabae656d81,
+            0x075bfa0863c987e9,
+        ]),
+    },
+    Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0x718fdad24ee1d90f,
+            0xa58c025bed8276af,
+            0x0c3a10230ab7976f,
+            0xf0c54df5c8f275e1,
+            0x4ec2478c28baf465,
+            0x1129373a90c508e6,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x019af5f980a3680c,
+            0x4ed7da0e66063afa,
+            0x600354723b5d9972,
+            0x8b2f958b20d09d72,
+            0x0474938f02d461db,
+            0x0dcf8b9e0684ab1c,
+        ]),
+    },
+    Fp2 {
+        c0: Fp::from_raw_unchecked([
+            0xb8640a067f5c429f,
+            0xcfd425f04b4dc505,
+            0x072d7e2ebb535cb1,
+            0xd947b5f9d2b4754d,
+            0x46a7142740774afb,
+            0x0c31864c32fb3b7e,
+        ]),
+        c1: Fp::from_raw_unchecked([
+            0x718fdad24ee1d90f,
+            0xa58c025bed8276af,
+            0x0c3a10230ab7976f,
+            0xf0c54df5c8f275e1,
+            0x4ec2478c28baf465,
+            0x1129373a90c508e6,
+        ]),
+    },
+];
+
+const SSWU_RV1: Fp2 = Fp2 {
+    c0: Fp::from_raw_unchecked([
+        0x7bcfa7a25aa30fda,
+        0xdc17dec12a927e7c,
+        0x2f088dd86b4ebef1,
+        0xd1ca2087da74d4a7,
+        0x2da2596696cebc1d,
+        0x0e2b7eedbbfd87d2,
+    ]),
+    c1: Fp::from_raw_unchecked([
+        0x7bcfa7a25aa30fda,
+        0xdc17dec12a927e7c,
+        0x2f088dd86b4ebef1,
+        0xd1ca2087da74d4a7,
+        0x2da2596696cebc1d,
+        0x0e2b7eedbbfd87d2,
     ]),
 };
 
@@ -285,538 +379,113 @@ impl MessageToField for G2Projective {
         Fp2 { c0, c1 }
     }
 
-    /// Default isogeny evaluation function.
     fn isogeny_map(&mut self) {
-        println!("isogen in: {:?}", G2Affine::from(&*self));
-        // self.eval_iso([&XNUM[..], &XDEN[..], &YNUM[..], &YDEN[..]]);
-        *self = self.map_isogeny([&XNUM[..], &XDEN[..], &YNUM[..], &YDEN[..]]);
-        let aff = crate::G2Affine::from(&*self);
-        println!("===");
-        println!("isogen: {:?}", aff);
-        println!("on curve: {:?}", aff.is_on_curve());
-        println!("===");
+        const COEFFS: [&[Fp2]; 4] = [&ISO3_XNUM, &ISO3_XDEN, &ISO3_YNUM, &ISO3_YDEN];
+
+        // xnum, xden, ynum, yden
+        let mut mapvals = [Fp2::zero(); 4];
+
+        // unpack input point
+        let G2Projective { x, y, z } = *self;
+
+        // compute powers of z
+        let zsq = z.square();
+        let zpows = [z, zsq, zsq * z];
+
+        // compute map value by Horner's rule
+        for idx in 0..4 {
+            let coeff = COEFFS[idx];
+            let clast = coeff.len() - 1;
+            mapvals[idx] = coeff[clast];
+            for jdx in 0..clast {
+                mapvals[idx] = mapvals[idx] * x + zpows[jdx] * coeff[clast - 1 - jdx];
+            }
+        }
+
+        // x denominator is order 1 less than x numerator, so we need an extra factor of z
+        mapvals[1] *= z;
+
+        // multiply result of Y map by the y-coord, y / z
+        mapvals[2] *= y;
+        mapvals[3] *= z;
+
+        // projective coordinates of resulting point
+        *self = G2Projective {
+            x: mapvals[0] * mapvals[3], // xnum * yden,
+            y: mapvals[2] * mapvals[1], // ynum * xden,
+            z: mapvals[1] * mapvals[3], // xden * yden
+        }
     }
 
     fn osswu_map(u: &Fp2) -> Self {
-        // sqrt(-1)
-        const C2: Fp2 = Fp2 {
-            c0: Fp::from_raw_unchecked([0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
-            c1: Fp::from_raw_unchecked([
-                0x43f5fffffffcaaae,
-                0x32b7fff2ed47fffd,
-                0x7e83a49a2e99d69,
-                0xeca8f3318332bb7a,
-                0xef148d1ea0f4c069,
-                0x40ab3263eff0206,
-            ]),
-        };
-        // sqrt(c2)
-        const C3: Fp2 = Fp2 {
-            c0: Fp::from_raw_unchecked([
-                0x7bcfa7a25aa30fda,
-                0xdc17dec12a927e7c,
-                0x2f088dd86b4ebef1,
-                0xd1ca2087da74d4a7,
-                0x2da2596696cebc1d,
-                0xe2b7eedbbfd87d2,
-            ]),
-            c1: Fp::from_raw_unchecked([
-                0x7bcfa7a25aa30fda,
-                0xdc17dec12a927e7c,
-                0x2f088dd86b4ebef1,
-                0xd1ca2087da74d4a7,
-                0x2da2596696cebc1d,
-                0xe2b7eedbbfd87d2,
-            ]),
-        };
-        // sqrt(xi^3 / c3)
-        const C4: Fp2 = Fp2 {
-            c0: Fp::from_raw_unchecked([
-                0x486f252db11dd19c,
-                0x791ffda2c3d18950,
-                0x5af6c27debf95eb4,
-                0x73b1fd8f2a929cde,
-                0xfc59602a1a90b871,
-                0x8d7daafa8baddb3,
-            ]),
-            c1: Fp::from_raw_unchecked([
-                0xb8640a067f5c429f,
-                0xcfd425f04b4dc505,
-                0x72d7e2ebb535cb1,
-                0xd947b5f9d2b4754d,
-                0x46a7142740774afb,
-                0xc31864c32fb3b7e,
-            ]),
-        };
-        // sqrt(xi^3 / (c2 * c3))
-        const C5: Fp2 = Fp2 {
-            c0: Fp::from_raw_unchecked([
-                0x338d9bfe08087330,
-                0x7b8e48b2bd83cefe,
-                0x530dad5d306b5be7,
-                0x5a4d7e8e6c408b6d,
-                0x6258f7a6232cab9b,
-                0xb985811cce14db5,
-            ]),
-            c1: Fp::from_raw_unchecked([
-                0xb419eb99753873d9,
-                0x8e224b27f904c15a,
-                0x6f49a54d4666af1,
-                0x7151d27ba01a1419,
-                0xeebecc0a94e63f55,
-                0x12a517e1d5b65eb0,
-            ]),
+        let usq = u.square();
+        let xi_usq = SSWU_XI * usq;
+        let xisq_u4 = xi_usq.square();
+        let nd_common = xisq_u4 + xi_usq; // XI^2 * u^4 + XI * u^2
+        let x_den =
+            SSWU_ELLP_A * Fp2::conditional_select(&(-nd_common), &SSWU_XI, nd_common.is_zero());
+        let x0_num = SSWU_ELLP_B * (Fp2::one() + nd_common); // B * (1 + (XI^2 * u^4 + XI * u^2))
+
+        // compute g(x0(u))
+        let x_densq = x_den.square();
+        let gx_den = x_densq * x_den;
+        // x0_num^3 + A * x0_num * x_den^2 + B * x_den^3
+        let gx0_num = (x0_num.square() + SSWU_ELLP_A * x_densq) * x0_num + SSWU_ELLP_B * gx_den;
+
+        // compute g(x0(u)) ^ ((p^2 - 9) // 16)
+        let sqrt_candidate = {
+            let vsq = gx_den.square(); // v^2
+            let v_3 = vsq * gx_den; // v^3
+            let v_4 = vsq.square(); // v^4
+            let uv_7 = gx0_num * v_3 * v_4; // u v^7
+            let uv_15 = uv_7 * v_4.square(); // u v^15
+            uv_7 * chain_p2m9div16(&uv_15) // u v^7 (u v^15) ^ ((p^2 - 9) // 16)
         };
 
-        // https://github.com/paulmillr/noble-bls12-381/blob/2fc8a17a2f92c128b610e5578c6552df26270913/math.js#L928
+        // set y = sqrt_candidate * Fp2::one(), check candidate against other roots of unity
+        let mut y = sqrt_candidate;
+        // check Fp2(0, 1)
+        let tmp = Fp2 {
+            c0: -sqrt_candidate.c1,
+            c1: sqrt_candidate.c0,
+        };
+        y.conditional_assign(&tmp, (tmp.square() * gx_den).ct_eq(&gx0_num));
+        // check Fp2(RV1, RV1)
+        let tmp = sqrt_candidate * SSWU_RV1;
+        y.conditional_assign(&tmp, (tmp.square() * gx_den).ct_eq(&gx0_num));
+        // check Fp2(RV1, -RV1)
+        let tmp = Fp2 {
+            c0: tmp.c1,
+            c1: -tmp.c0,
+        };
+        y.conditional_assign(&tmp, (tmp.square() * gx_den).ct_eq(&gx0_num));
 
-        let mut tmp1 = u.square();
-        let tmp3 = XI * tmp1;
-        let mut tmp5 = tmp3.square();
-        let mut xd = tmp5 + tmp3;
-        let x1n = (xd + Fp2::one()) * ELLP_B;
-        xd *= ELLP_A;
-        xd = xd.neg();
-        xd.conditional_assign(&(XI * ELLP_A), xd.is_zero()); // If xd == 0, set xd = Z * A
-        let mut tmp2 = xd.square();
-        let gxd = tmp2 * xd; // xd^3
-        tmp2 *= ELLP_A;
-        let gx1 = (x1n.square() + tmp2) * x1n + ELLP_B * gxd; // x1n^3 + A * x1n * xd^2 + B * xd^3
-        let mut tmp4 = gxd.square();
-        tmp2 = tmp4 * gxd; // gxd^3
-        tmp4 = tmp4.square(); // gxd^4
-        tmp2 = tmp2 * tmp4; // gxd^7
-        tmp2 = tmp2 * gx1; // gx1 * gxd^7
-        tmp4 = tmp2 * tmp4.square(); // gx1 * gxd^15
-        let mut y = chain_p2m9div16(&tmp4);
-        y *= tmp2; // This is almost sqrt(gx1)
+        // compute g(x1(u)) = g(x0(u)) * XI^3 * u^6
+        let gx1_num = gx0_num * xi_usq * xisq_u4;
+        // compute g(x1(u)) * u^3
+        let sqrt_candidate = sqrt_candidate * usq * u;
+        let mut eta_found = Choice::from(0u8);
+        for eta in &SSWU_ETAS[..] {
+            let tmp = sqrt_candidate * eta;
+            let found = (tmp.square() * gx_den).ct_eq(&gx1_num);
+            y.conditional_assign(&tmp, found);
+            eta_found |= found;
+        }
 
-        // Check the four possible square roots
-        tmp4 = y * C2;
-        tmp2 = tmp4.square() * gxd;
-        y.conditional_assign(&tmp4, tmp2.ct_eq(&gx1));
-        tmp4 = y * C3;
-        tmp2 = tmp4.square() * gxd;
-        y.conditional_assign(&tmp4, tmp2.ct_eq(&gx1));
-        tmp4 = tmp4 * C2;
-        tmp2 = tmp4.square() * gxd;
-        // if x1 is square, this is its sqrt
-        y.conditional_assign(&tmp4, tmp2.ct_eq(&gx1));
-
-        let gx2 = gx1 * tmp5 * tmp3; // gx1 * XI^3 * u^6
-        tmp5 = y * tmp1 * u; // this is almost sqrt(gx2)
-
-        // Check the four possible square roots
-        tmp1 = tmp5 * C4;
-        tmp4 = tmp1 * C2;
-        tmp2 = tmp4.square() * gxd;
-        tmp1.conditional_assign(&tmp4, tmp2.ct_eq(&gx2));
-        tmp4 = tmp5 * C5;
-        tmp2 = tmp4.square() * gxd;
-        tmp1.conditional_assign(&tmp4, tmp2.ct_eq(&gx2));
-        tmp4 = tmp4 * C4;
-        tmp2 = tmp4.square() * gxd;
-        // if x2 is square, this is its sqrt
-        tmp1.conditional_assign(&tmp4, tmp2.ct_eq(&gx2));
-
-        tmp2 = y.square() * gxd;
-        let e8 = tmp2.ct_eq(&gx1);
-        y.conditional_assign(&tmp1, !e8); // choose correct y coordinate
-        tmp2 = tmp3 * x1n; // x2n = x2n / xd = Z * u^2 * x1n / xd
-        let xn = Fp2::conditional_select(&tmp2, &x1n, e8); // choose correct x-coordinate
+        let x_num = Fp2::conditional_select(&x0_num, &(x0_num * xi_usq), eta_found);
+        // ensure sign of y and sign of u agree
         y.conditional_negate(u.sgn0() ^ y.sgn0()); // fix sign of y
 
-        let mut tmp = G2Projective {
-            x: xn,
-            y: y * xd,
-            z: xd,
-        };
-        let aff = G2Affine::from(tmp);
-        println!("===");
-        println!("osswu: {:?}", aff);
-        println!("on curve: {:?}", aff.is_on_curve());
-        println!("===");
-        println!("{:?}", tmp);
-        println!("{:?}", G2Projective::from(&aff));
-        println!("{:?}", G2Projective::from(&aff).ct_eq(&tmp));
-        println!("===");
-
-        tmp
-        // G2Projective::from(&aff)
-
-        // let p = ((XI * XI * XI) * (c2 * c3).invert().unwrap()).sqrt();
-        // println!("c5: {:#x?}", p);
-        // assert!(false);
-
-        // compute x0 and g(x0)
-        // let [usq, xi_usq, xi2_u4, x0_num, x0_den, gx0_num, gx0_den] =
-        //     osswu_helper!(Fp2, u, &XI, &ELLP_A, &ELLP_B);
-
-        // // compute g(x0(u)) ^ ((p - 9) // 16)
-        // let sqrt_candidate = {
-        //     let mut tmp1 = gx0_den.square(); // v^2
-        //     let mut tmp2 = tmp1;
-        //     tmp1 = tmp1.square(); // v^4
-        //     tmp2.mul_assign(&tmp1); // v^6
-        //     tmp2.mul_assign(&gx0_den); // v^7
-        //     tmp2.mul_assign(&gx0_num); // u v^7
-        //     tmp1 = tmp1.square(); // v^8
-        //     tmp1.mul_assign(&tmp2); // u v^15
-        //     let tmp3 = tmp1;
-        //     tmp1 = chain_p2m9div16(&tmp3); // (u v^15) ^ ((p - 9) // 16)
-        //     tmp1.mul_assign(&tmp2); // u v^7 (u v^15) ^ ((p - 9) // 16)
-        //     tmp1
-        // };
-
-        // let mut result = G2Projective::identity();
-        // let mut done = Choice::from(0u8);
-
-        // for root in &ROOTS_OF_UNITY[..] {
-        //     let mut y0 = *root;
-        //     y0.mul_assign(&sqrt_candidate);
-
-        //     let mut tmp = y0.square();
-        //     tmp.mul_assign(&gx0_den);
-
-        //     let found = Choice::from((tmp == gx0_num) as u8) & !done;
-
-        //     let sgn0_y_xor_u = y0.sgn0() ^ u.sgn0();
-        //     y0.conditional_negate(sgn0_y_xor_u);
-        //     // y0.mul_assign(&gx0_den); // y * x0_den^3 / x0_den^3 = y
-        //     y0.mul_assign(&x0_den); // y * x0_den / x0_den = y
-
-        //     // tmp = x0_num;
-        //     // tmp.mul_assign(&x0_den); // x0_num * x0_den / x0_den^2 = x0_num / x0_den
-
-        //     let found_e = G2Projective {
-        //         x: x0_num, //tmp,
-        //         y: y0,
-        //         z: x0_den,
-        //     };
-        //     result.conditional_assign(&found_e, found);
-        //     done |= found;
-        // }
-
-        // // If we've gotten here, g(X0(u)) is not square. Use X1 instead.
-        // let x1_num = {
-        //     let mut tmp = x0_num;
-        //     tmp.mul_assign(&xi_usq);
-        //     tmp
-        // };
-        // let gx1_num = {
-        //     let mut tmp = xi2_u4;
-        //     tmp.mul_assign(&xi_usq); // xi^3 u^6
-        //     tmp.mul_assign(&gx0_num);
-        //     tmp
-        // };
-        // let sqrt_candidate = {
-        //     let mut tmp = sqrt_candidate;
-        //     tmp.mul_assign(&usq);
-        //     tmp.mul_assign(u);
-        //     tmp
-        // };
-        // for eta in &ETAS[..] {
-        //     let mut y1 = *eta;
-        //     y1.mul_assign(&sqrt_candidate);
-
-        //     let mut tmp = y1.square();
-        //     tmp.mul_assign(&gx0_den);
-
-        //     let found = Choice::from((tmp == gx1_num) as u8) & !done;
-
-        //     let sgn0_y_xor_u = y1.sgn0() ^ u.sgn0();
-        //     y1.conditional_negate(sgn0_y_xor_u);
-        //     // y1.mul_assign(&gx0_den); // y * x0_den^3 / x0_den^3 = y
-        //     y1.mul_assign(&x0_den); // y * x0_den / x0_den = y
-
-        //     // tmp = x1_num;
-        //     // tmp.mul_assign(&x0_den); // x1_num * x0_den / x0_den^2 = x1_num / x0_den
-
-        //     let found_e = G2Projective {
-        //         x: x1_num, // tmp,
-        //         y: y1,
-        //         z: x0_den,
-        //     };
-        //     result.conditional_assign(&found_e, found);
-        //     done |= found;
-        // }
-
-        // if !bool::from(done) {
-        //     panic!("Failed to find square root in G2 osswu_map");
-        // }
-        // result
+        G2Projective {
+            x: x_num,
+            y: y * x_den,
+            z: x_den,
+        }
     }
 
     fn clear_h(&mut self) {
-        let a = G2Affine::from(*self);
-        *self = G2Projective::from(a).clear_cofactor();
-        // *self = chain_h2_eff(&self);
-        // *self = (&*self)
-        //     * crate::Scalar::from_raw([
-        //         0xa40200040001ffffu64,
-        //         0xb116900400069009u64,
-        //         0x0000000000000002u64,
-        //         0x0000000000000000u64,
-        //     ]);
-        // let mut bs = hex::decode(
-        //     "0bc69f08f2ee75b3584c6a0ea91b352888e2a8e9145ad7689986ff031508ffe1329c2f178731db956d82bf015d1212b02ec0ec69d7477c1ae954cbc06689f6a359894c0adebbf6b4e8020005aaa95551",
-        // )
-        // .unwrap();
-        // bs.reverse();
-        // *self = (&*self).multiply(&bs[..]);
+        *self = self.clear_cofactor();
     }
-}
-
-#[test]
-fn test_projective_iso3_zero() {
-    let zero = Fp2::zero();
-    let mut pt = G2Projective {
-        x: Fp2::zero(),
-        y: Fp2::zero(),
-        z: Fp2::zero(),
-    };
-    pt.isogeny_map();
-    assert_eq!(pt.x, zero);
-    assert_eq!(pt.y, zero);
-    assert_eq!(pt.z, zero);
-}
-
-#[test]
-fn test_projective_iso3_one() {
-    let mut pt = G2Projective {
-        x: Fp2::one(),
-        y: Fp2::one(),
-        z: Fp2::one(),
-    };
-    pt = pt.double();
-    pt.isogeny_map();
-
-    let aff = crate::g2::G2Affine::from(pt);
-    println!("{:?}", aff);
-    println!("{}", bool::from(aff.is_on_curve()));
-    assert!(false);
-
-    use crate::Scalar;
-    let h_eff = Scalar::from_raw([
-        0xa40200040001ffffu64,
-        0xb116900400069009u64,
-        0x0000000000000002u64,
-        0x0000000000000000u64,
-    ]);
-    println!("h_eff {}", h_eff);
-    println!("h_eff {:?}", h_eff);
-    println!("h_eff+1 {:?}", h_eff + Scalar::from(1));
-
-    let pta = pt.clear_cofactor();
-    let ptb = pt
-        * crate::Scalar::from_raw([
-            0xa40200040001ffffu64,
-            0xb116900400069009u64,
-            0x0000000000000002u64,
-            0x0000000000000000u64,
-        ]);
-    println!("{:#x?}", crate::g2::G2Affine::from(pta));
-    println!("{:#x?}", crate::g2::G2Affine::from(ptb));
-
-    // println!("{:#x?}", pt);
-    // println!("{:#x?}", crate::g2::G2Affine::from(pt));
-    // println!(
-    //     "{}",
-    //     hex::encode(&crate::g2::G2Affine::from(pt).to_compressed()[..])
-    // );
-    // let ptb = pt + pt;
-    // pt = pt.double_safe();
-    // println!(
-    //     "{}",
-    //     hex::encode(&crate::g2::G2Affine::from(pt).to_compressed()[..])
-    // );
-    // println!(
-    //     "{}",
-    //     hex::encode(&crate::g2::G2Affine::from(ptb).to_compressed()[..])
-    // );
-    // assert!(bool::from(pt.is_on_curve()));
-
-    let x_expect = Fp2 {
-        c0: Fp::from_raw_unchecked([
-            0x57c6555579807bcau64,
-            0xc285c71b6d7a38e3u64,
-            0xde7b4e7d31a614c6u64,
-            0x31b21e4af64b0e94u64,
-            0x8fc02d1bfb73bf52u64,
-            0x1439b899baf1b35bu64,
-        ]),
-        c1: Fp::from_raw_unchecked([
-            0xf58daaab358a307bu64,
-            0x665f8e3829a071c6u64,
-            0x55c5ca596c9b3369u64,
-            0xfeecf110f9110a6au64,
-            0xd464b281b39bd1ccu64,
-            0x0e725f493c63801cu64,
-        ]),
-    };
-    let y_expect = Fp2 {
-        c0: Fp::from_raw_unchecked([
-            0xa72f3db7cb8405a4u64,
-            0x221fda12b88ad097u64,
-            0x71ec98c879891123u64,
-            0x54f9a5b05305ae23u64,
-            0xf176e62b3bde9b44u64,
-            0x04d0ca6dbecbd55eu64,
-        ]),
-        c1: Fp::from_raw_unchecked([
-            0xe1b3626ab65e39a9u64,
-            0x4e79097a56dc4bd9u64,
-            0xb0e977c69aa27452u64,
-            0x761b0f37a1e26286u64,
-            0xfbf7043de3811ad0u64,
-            0x124c9ad43b6cf79bu64,
-        ]),
-    };
-    let z_expect = Fp2 {
-        c0: Fp::from_raw_unchecked([
-            0xb9fefffffffebb2au64,
-            0x1eabfffeb153ffffu64,
-            0x6730d2a0f6b0f624u64,
-            0x64774b84f38512bfu64,
-            0x4b1ba7b6434bacd7u64,
-            0x1a0111ea397fe69au64,
-        ]),
-        c1: Fp::from_raw_unchecked([
-            0x00000000000065b2u64,
-            0x0000000000000000u64,
-            0x0000000000000000u64,
-            0x0000000000000000u64,
-            0x0000000000000000u64,
-            0x0000000000000000u64,
-        ]),
-    };
-    let x_expect = x_expect * z_expect;
-    let y_expect = y_expect * z_expect * z_expect;
-    // assert_eq!(pt.x, x_expect);
-    // assert_eq!(pt.y, y_expect);
-    assert_eq!(pt.z, z_expect);
-}
-
-#[test]
-fn test_projective_iso3_fixed() {
-    let xi = Fp2 {
-        c0: Fp::from_raw_unchecked([
-            0x2b4f1b0418ec2ab9,
-            0x8ccfc3bd38b8b1bd,
-            0x160d21c60264b158,
-            0x44d11146d827540,
-            0xe9a1ff8efbfa3e55,
-            0x2790421956b94db,
-        ]),
-        c1: Fp::from_raw_unchecked([
-            0xf53130c2f21627e9,
-            0x8bf41fb299f22777,
-            0x22de3385337eef77,
-            0xa3d650b28238d936,
-            0xc26ac36ef74be788,
-            0x6b0de5801bcdb55,
-        ]),
-    };
-    let yi = Fp2 {
-        c0: Fp::from_raw_unchecked([
-            0x8c3478d244e73a1e,
-            0x9ad80eaea2847ef,
-            0xa009d2c6a19c4d7c,
-            0xad14ea37d3caa2e6,
-            0xf4d4bfd1cd09cd5e,
-            0x633ac7191e6e1cd,
-        ]),
-        c1: Fp::from_raw_unchecked([
-            0xa242b42d478776e5,
-            0x3474f7bb939b1fde,
-            0xca9317dcdf327fbb,
-            0x92c8b4def6629d23,
-            0xf3db74fd5208df9e,
-            0xc3ff42813809dbe,
-        ]),
-    };
-    let zi = Fp2 {
-        c0: Fp::from_raw_unchecked([
-            0x396e3a171d3682eb,
-            0x9d8a8a66679bed76,
-            0xd149d6008a42ad3c,
-            0x642a4f268fc07724,
-            0xfe94535d55e01ead,
-            0x17ee1dc7f35478ab,
-        ]),
-        c1: Fp::from_raw_unchecked([
-            0xaec2bbaef501dcc,
-            0xf647afeae70603a1,
-            0x268aeee6dc5d1d38,
-            0xc9a8fe231d8fec6b,
-            0xbbfb6687b11e9507,
-            0x8f1b25b6b4c4d0e,
-        ]),
-    };
-    let mut pt = G2Projective {
-        x: xi,
-        y: yi,
-        z: zi,
-    };
-    pt.isogeny_map();
-
-    let x_expect = Fp2 {
-        c0: Fp::from_raw_unchecked([
-            0xaa51c0e1180b0d57,
-            0x28b0e686761afc8c,
-            0x19ff407a3a484438,
-            0x63ea8ff9abf6fddf,
-            0x5c6aa531d2636d17,
-            0x185badd0900f1073,
-        ]),
-        c1: Fp::from_raw_unchecked([
-            0x6ac4e087d0ba1981,
-            0x37118ac6f0aa47f6,
-            0x1ee51ba02ed89f1f,
-            0xb7d4b12c8096b32,
-            0x27bb5e93c6038b03,
-            0x184c84a00727706,
-        ]),
-    };
-    let y_expect = Fp2 {
-        c0: Fp::from_raw_unchecked([
-            0x8c76ec95e02f5d6a,
-            0x5d31fde09b3d4d4e,
-            0xa4e17e369860ac14,
-            0xda389b35e29b699a,
-            0xe67fa8059a237afa,
-            0x1220f324257645f7,
-        ]),
-        c1: Fp::from_raw_unchecked([
-            0x2fdab2cdbc61a883,
-            0x5dcf5ada26fc9714,
-            0x995cd083b242fec6,
-            0xa0079db2fc99f60b,
-            0xe01e053554e727bb,
-            0x55a9d8217bab54f,
-        ]),
-    };
-    let z_expect = Fp2 {
-        c0: Fp::from_raw_unchecked([
-            0x74daa669f740f9f2,
-            0x283671a4e6a1c8f,
-            0x14230a1fecab7ad9,
-            0xb34dce82bd2eb9dd,
-            0x866e706af63aef04,
-            0x252ef31770c147d,
-        ]),
-        c1: Fp::from_raw_unchecked([
-            0xc1b8083edd204658,
-            0xa9c56c859e3d920c,
-            0x1e0b5d8a59b68688,
-            0x60d10c39c8c72e4e,
-            0x948f508d12a11262,
-            0xb7e31697882943e,
-        ]),
-    };
-    assert_eq!(pt.x, x_expect);
-    assert_eq!(pt.y, y_expect);
-    assert_eq!(pt.z, z_expect);
 }
 
 #[cfg(test)]
@@ -824,7 +493,7 @@ fn check_g2_prime(x: &Fp2, y: &Fp2, z: &Fp2) -> subtle::Choice {
     // (X : Y : Z)==(X/Z, Y/Z) is on E: y^2 = x^3 + ELLP_A * x + ELLP_B.
     // y^2 z = (x^3) + A (x z^2) + B z^3
     let zsq = z.square();
-    (y.square() * z).ct_eq(&(x.square() * x + ELLP_A * x * zsq + ELLP_B * zsq * z))
+    (y.square() * z).ct_eq(&(x.square() * x + SSWU_ELLP_A * x * zsq + SSWU_ELLP_B * zsq * z))
 }
 
 #[test]
@@ -850,8 +519,10 @@ fn test_osswu_semirandom() {
 
 #[test]
 fn test_encode_to_curve_07() {
-    use crate::g2::G2Affine;
-    use crate::hash_to_curve::{ExpandMsgXmd, HashToCurve};
+    use crate::{
+        g2::G2Affine,
+        hash_to_curve::{ExpandMsgXmd, HashToCurve},
+    };
 
     struct TestCase {
         msg: &'static [u8],
@@ -925,7 +596,10 @@ fn test_encode_to_curve_07() {
 
 #[test]
 fn test_hash_to_curve_07() {
-    use crate::hash_to_curve::{ExpandMsgXmd, HashToCurve};
+    use crate::{
+        g2::G2Affine,
+        hash_to_curve::{ExpandMsgXmd, HashToCurve},
+    };
 
     struct TestCase {
         msg: &'static [u8],

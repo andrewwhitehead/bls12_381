@@ -13,13 +13,17 @@ use alloc::vec::Vec;
 
 const OVERSIZE_DST_SALT: &[u8] = b"H2C-OVERSIZE-DST-";
 
+/// Enum to represent the DST of a message expansion
 #[derive(Debug)]
 enum ExpandMsgDst<'x, L: ArrayLength<u8>> {
+    /// DST produced by hashing the input DST
     Hashed(GenericArray<u8, L>),
+    /// A raw input DST (< 255 chars)
     Raw(&'x [u8]),
 }
 
 impl<'x, L: ArrayLength<u8>> ExpandMsgDst<'x, L> {
+    /// Produce DST for expand_message_xof
     pub fn process_xof<H>(dst: &'x [u8]) -> Self
     where
         H: Default + Update + ExtendableOutputDirty,
@@ -37,6 +41,7 @@ impl<'x, L: ArrayLength<u8>> ExpandMsgDst<'x, L> {
         }
     }
 
+    /// Produce DST for expand_message_xmd
     pub fn process_xmd<H>(dst: &'x [u8]) -> Self
     where
         H: Digest<OutputSize = L>,
@@ -48,6 +53,7 @@ impl<'x, L: ArrayLength<u8>> ExpandMsgDst<'x, L> {
         }
     }
 
+    /// Get the raw bytes of the DST
     pub fn data(&'x self) -> &'x [u8] {
         match self {
             Self::Hashed(arr) => &arr[..],
@@ -55,6 +61,7 @@ impl<'x, L: ArrayLength<u8>> ExpandMsgDst<'x, L> {
         }
     }
 
+    /// Get the length of the DST
     pub fn len(&'x self) -> usize {
         match self {
             Self::Hashed(_) => L::to_usize(),
@@ -83,8 +90,8 @@ pub trait ExpandMessage<'x> {
     }
 }
 
-/// Placeholder type for implementing expand_message_xof based on a
-/// hash function with extendable output
+/// A generator for the output of expand_message_xof for a given
+/// extendable hash function, message, DST, and output length
 pub struct ExpandMsgXof<H: ExtendableOutputDirty> {
     hash: <H as ExtendableOutputDirty>::Reader,
     remain: usize,
@@ -125,8 +132,8 @@ where
     }
 }
 
-/// Placeholder type for implementing expand_message_xmd based on a
-/// hash function
+/// A generator for the output of expand_message_xmd for a given
+/// digest hash function, message, DST, and output length
 #[derive(Debug)]
 pub struct ExpandMsgXmd<'x, H: Digest> {
     dst: ExpandMsgDst<'x, H::OutputSize>,
@@ -254,7 +261,7 @@ mod tests {
 
     // Except internal variables, expand_message_xmd and expand_message_xof did not change
     // between draft 7 and draft 8 (https://tools.ietf.org/rfcdiff?difftype=--hwdiff&url2=draft-irtf-cfrg-hash-to-curve-08.txt).
-    // So we can use test vector introduced in draft 8 to test the draft 7 implementation.
+    // These test vectors are consistent between draft 8 and draft 10.
 
     /// From https://tools.ietf.org/html/draft-irtf-cfrg-hash-to-curve-08#appendix-I.1
     #[cfg(feature = "alloc")]

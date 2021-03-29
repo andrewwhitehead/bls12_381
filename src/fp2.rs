@@ -363,9 +363,10 @@ impl Fp2 {
         res
     }
 
-    /// Returns the sign of a center lifted element over the integer ring
+    /// Returns either 0 or 1 indicating the "sign" of x, where sgn0(x) == 1
+    /// just when x is "negative". (In other words, this function always considers 0 to be positive.)
     /// https://tools.ietf.org/html/draft-irtf-cfrg-hash-to-curve-10#section-4.1
-    pub fn sgn0(&self) -> Choice {
+    pub(crate) fn sgn0(&self) -> Choice {
         let sign_0 = self.c0.sgn0();
         let zero_0 = self.c0.is_zero();
         let sign_1 = self.c1.sgn0();

@@ -4,7 +4,6 @@ use core::borrow::Borrow;
 use core::fmt;
 use core::iter::Sum;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
-use digest::{consts::U128, generic_array::GenericArray};
 use group::{
     prime::{PrimeCurve, PrimeCurveAffine, PrimeGroup},
     Curve, Group, GroupEncoding, UncompressedEncoding,
@@ -997,19 +996,19 @@ impl G2Projective {
         // }
         // return acc;
 
-        // #[cfg(feature = "endo")]
-        // fn clear_cofactor(this: &G2Projective) -> G2Projective {
-        //     let t1 = this.mul_by_x(); // [x] P
-        //     let t2 = this.psi(); // psi(P)
+        #[cfg(feature = "endo")]
+        fn clear_cofactor(this: &G2Projective) -> G2Projective {
+            let t1 = this.mul_by_x(); // [x] P
+            let t2 = this.psi(); // psi(P)
 
-        //     this.double().psi2() // psi^2(2P)
-        //         + (t1 + t2).mul_by_x() // psi^2(2P) + [x^2] P + [x] psi(P)
-        //         - t1 // psi^2(2P) + [x^2 - x] P + [x] psi(P)
-        //         - t2 // psi^2(2P) + [x^2 - x] P + [x - 1] psi(P)
-        //         - this // psi^2(2P) + [x^2 - x - 1] P + [x - 1] psi(P)
-        // }
+            this.double().psi2() // psi^2(2P)
+                + (t1 + t2).mul_by_x() // psi^2(2P) + [x^2] P + [x] psi(P)
+                - t1 // psi^2(2P) + [x^2 - x] P + [x] psi(P)
+                - t2 // psi^2(2P) + [x^2 - x] P + [x - 1] psi(P)
+                - this // psi^2(2P) + [x^2 - x - 1] P + [x - 1] psi(P)
+        }
 
-        // #[cfg(not(feature = "endo"))]
+        #[cfg(not(feature = "endo"))]
         fn clear_cofactor(this: &G2Projective) -> G2Projective {
             this.multiply(&[
                 0x51, 0x55, 0xa9, 0xaa, 0x5, 0x0, 0x2, 0xe8, 0xb4, 0xf6, 0xbb, 0xde, 0xa, 0x4c,
@@ -1074,107 +1073,6 @@ impl G2Projective {
 
         (self.y.square() * self.z).ct_eq(&(self.x.square() * self.x + self.z.square() * self.z * B))
             | self.z.is_zero()
-    }
-
-    /// Generic isogeny evaluation function.
-    // pub(crate) fn eval_iso(&mut self, coeffs: [&[Fp2]; 4]) {
-    //     let mut tmp = [Fp2::zero(); 4];
-    //     let mut mapvals = [Fp2::zero(); 4];
-
-    //     // unpack input point
-    //     let x = &mut self.x;
-    //     let y = &mut self.y;
-    //     let z = &mut self.z;
-
-    //     // precompute powers of z
-    //     let zpows = {
-    //         let mut zpows = [Fp2::zero(); 3];
-    //         zpows[0] = z.square(); // z^2
-    //         zpows[1] = zpows[0].square(); // z^4
-    //         {
-    //             let (z_squared, rest) = zpows.split_at_mut(1);
-    //             for idx in 1..coeffs[2].len() - 2 {
-    //                 if idx % 2 == 0 {
-    //                     rest[idx] = rest[idx / 2 - 1].square();
-    //                 } else {
-    //                     rest[idx] = rest[idx - 1];
-    //                     rest[idx].mul_assign(&z_squared[0]);
-    //                 }
-    //             }
-    //         }
-    //         zpows
-    //     };
-
-    //     for idx in 0..4 {
-    //         let clen = coeffs[idx].len() - 1;
-    //         // multiply coeffs by powers of Z
-    //         for jdx in 0..clen {
-    //             tmp[jdx] = coeffs[idx][clen - 1 - jdx];
-    //             tmp[jdx].mul_assign(&zpows[jdx]);
-    //         }
-    //         // compute map value by Horner's rule
-    //         mapvals[idx] = coeffs[idx][clen];
-    //         for tmpval in &tmp[..clen] {
-    //             mapvals[idx].mul_assign(&*x);
-    //             mapvals[idx].add_assign(tmpval);
-    //         }
-    //     }
-
-    //     // x denominator is order 1 less than x numerator, so we need an extra factor of Z^2
-    //     mapvals[1].mul_assign(&zpows[0]);
-
-    //     // multiply result of Y map by the y-coord, y / z^3
-    //     mapvals[2].mul_assign(&*y);
-    //     mapvals[3].mul_assign(&*z);
-    //     mapvals[3].mul_assign(&zpows[0]);
-
-    //     // compute Jacobian coordinates of resulting point
-    //     *z = mapvals[1] * mapvals[3]; // Zout = xden * yden
-
-    //     *x = mapvals[0];
-    //     x.mul_assign(&mapvals[3]); // xnum * yden
-    //     x.mul_assign(&*z); // xnum * xden * yden^2
-
-    //     *y = z.square(); // xden^2 * yden^2
-    //     y.mul_assign(&mapvals[2]); // ynum * xden^2 * yden^2
-    //     y.mul_assign(&mapvals[1]); // ynum * xden^3 * yden^2
-    // }
-
-    /// Generic isogeny evaluation function.
-    pub(crate) fn map_isogeny(&self, coeffs: [&[Fp2]; 4]) -> G2Projective {
-        // xnum, xden, ynum, yden
-        let mut mapvals = [Fp2::zero(); 4];
-
-        // unpack input point
-        let G2Projective { x, y, z } = *self;
-
-        // compute powers of z
-        let zsq = z.square();
-        let zpows = [z, zsq, zsq * z];
-
-        // compute map value by Horner's rule
-        for idx in 0..4 {
-            let coeff = coeffs[idx];
-            let clast = coeff.len() - 1;
-            mapvals[idx] = coeff[clast];
-            for jdx in 0..clast {
-                mapvals[idx] = mapvals[idx] * x + zpows[jdx] * coeff[clast - 1 - jdx];
-            }
-        }
-
-        // x denominator is order 1 less than x numerator, so we need an extra factor of z
-        mapvals[1] *= z;
-
-        // multiply result of Y map by the y-coord, y / z
-        mapvals[2] *= y;
-        mapvals[3] *= z;
-
-        // homogeneous coordinates of resulting point
-        G2Projective {
-            x: mapvals[0] * mapvals[3], // xnum * yden,
-            y: mapvals[2] * mapvals[1], // ynum * xden,
-            z: mapvals[1] * mapvals[3], // xden * yden
-        }
     }
 }
 

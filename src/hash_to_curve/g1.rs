@@ -7,7 +7,7 @@ use crate::g1::G1Projective;
 use crate::generic_array::{typenum::U64, GenericArray};
 
 /// Coefficients of the 11-isogeny x map's numerator
-const XNUM: [Fp; 12] = [
+const ISO11_XNUM: [Fp; 12] = [
     Fp::from_raw_unchecked([
         0x4d18b6f3af00131c,
         0x19fa219793fee28c,
@@ -107,7 +107,7 @@ const XNUM: [Fp; 12] = [
 ];
 
 /// Coefficients of the 11-isogeny x map's denominator
-const XDEN: [Fp; 11] = [
+const ISO11_XDEN: [Fp; 11] = [
     Fp::from_raw_unchecked([
         0xb962a077fdb0f945,
         0xa6a9740fefda13a0,
@@ -199,7 +199,7 @@ const XDEN: [Fp; 11] = [
 ];
 
 /// Coefficients of the 11-isogeny y map's numerator
-const YNUM: [Fp; 16] = [
+const ISO11_YNUM: [Fp; 16] = [
     Fp::from_raw_unchecked([
         0x2b567ff3e2837267,
         0x1d4d9e57b958a767,
@@ -331,7 +331,7 @@ const YNUM: [Fp; 16] = [
 ];
 
 /// Coefficients of the 11-isogeny y map's denominator
-const YDEN: [Fp; 16] = [
+const ISO11_YDEN: [Fp; 16] = [
     Fp::from_raw_unchecked([
         0xeb6c359d47e52b1c,
         0x18ef5f8a10634d60,
@@ -462,7 +462,7 @@ const YDEN: [Fp; 16] = [
     ]),
 ];
 
-const ELLP_A: Fp = Fp::from_raw_unchecked([
+const SSWU_ELLP_A: Fp = Fp::from_raw_unchecked([
     0x2f65aa0e9af5aa51,
     0x86464c2d1e8416c3,
     0xb85ce591b7bd31e2,
@@ -471,7 +471,7 @@ const ELLP_A: Fp = Fp::from_raw_unchecked([
     0x155455c3e5071d85,
 ]);
 
-const ELLP_B: Fp = Fp::from_raw_unchecked([
+const SSWU_ELLP_B: Fp = Fp::from_raw_unchecked([
     0xfb996971fe22a1e0,
     0x9aa93eb35b742d6f,
     0x8c476013de99c5c4,
@@ -480,7 +480,7 @@ const ELLP_B: Fp = Fp::from_raw_unchecked([
     0x06824061418a386b,
 ]);
 
-const XI: Fp = Fp::from_raw_unchecked([
+const SSWU_XI: Fp = Fp::from_raw_unchecked([
     0x886c00000023ffdc,
     0x0f70008d3090001d,
     0x77672417ed5828c3,
@@ -523,83 +523,84 @@ impl MessageToField for G1Projective {
     }
 
     fn isogeny_map(&mut self) {
-        *self = self.map_isogeny([&XNUM[..], &XDEN[..], &YNUM[..], &YDEN[..]]);
+        const COEFFS: [&[Fp]; 4] = [&ISO11_XNUM, &ISO11_XDEN, &ISO11_YNUM, &ISO11_YDEN];
+
+        // unpack input point
+        let G1Projective { x, y, z } = *self;
+
+        let mut mapvals = [Fp::zero(); 4];
+
+        let zpows = {
+            let mut zpows = [Fp::zero(); 15];
+            zpows[0] = z;
+            for idx in 1..zpows.len() {
+                zpows[idx] = zpows[idx - 1] * z;
+            }
+            zpows
+        };
+
+        // compute map value by Horner's rule
+        for idx in 0..4 {
+            let coeff = COEFFS[idx];
+            let clast = coeff.len() - 1;
+            mapvals[idx] = coeff[clast];
+            for jdx in 0..clast {
+                mapvals[idx] = mapvals[idx] * x + zpows[jdx] * coeff[clast - 1 - jdx];
+            }
+        }
+
+        // x denominator is order 1 less than x numerator, so we need an extra factor of z
+        mapvals[1] *= z;
+
+        // multiply result of Y map by the y-coord, y / z
+        mapvals[2] *= y;
+        mapvals[3] *= z;
+
+        // projective coordinates of resulting point
+        *self = G1Projective {
+            x: mapvals[0] * mapvals[3], // xnum * yden,
+            y: mapvals[2] * mapvals[1], // ynum * xden,
+            z: mapvals[1] * mapvals[3], // xden * yden
+        }
     }
 
     fn osswu_map(u: &Fp) -> G1Projective {
-        // compute x0 and g(x0)
-        // let [usq, xi_usq, _, x0_num, x0_den, gx0_num, gx0_den] =
-        //     osswu_helper!(Fp, u, &XI, &ELLP_A, &ELLP_B);
+        let usq = u.square();
+        let xi_usq = SSWU_XI * usq;
+        let xisq_u4 = xi_usq.square();
+        let nd_common = xisq_u4 + xi_usq; // XI^2 * u^4 + XI * u^2
+        let x_den =
+            SSWU_ELLP_A * Fp::conditional_select(&(-nd_common), &SSWU_XI, nd_common.is_zero());
+        let x0_num = SSWU_ELLP_B * (Fp::one() + nd_common); // B * (1 + (XI^2 * u^4 + XI * u^2))
 
-        let tmp1 = u.square();
-        let tmp3 = tmp1 * XI;
-        let mut tmp2 = tmp3.square();
-        let mut xd = tmp3 + tmp2;
-        let x1n = (xd + Fp::one()) * ELLP_B;
-        xd *= ELLP_A;
-        xd = xd.neg();
-        xd.conditional_assign(&(XI * ELLP_A), xd.is_zero()); // If xd == 0, set xd = Z * A
-        tmp2 = xd.square();
-        let gxd = tmp2 * xd; // xd^3
-        tmp2 *= ELLP_A;
-        let gx1 = (x1n.square() + tmp2) * x1n + ELLP_B * gxd; // x1n^3 + A * x1n * xd^2 + B * xd^3
-        tmp2 = gx1 * gxd;
-        let tmp4 = tmp2 * gxd.square(); // gx1 * gxd^3
-        let mut y1 = chain_pm3div4(&tmp4); // (gx1 * gxd^3)^((p - 3) / 4)
-        y1 *= tmp2; // gx1 * gxd * (gx1 * gxd^3)^((p - 3) / 4)
-        let x2n = tmp3 * x1n; // x2 = x2n / xd = Z * u^2 * x1n / xd
-        let y2 = y1 * SQRT_M_XI_CUBED * tmp1 * u;
-        tmp2 = y1.square() * gxd;
-        let e2 = tmp2.ct_eq(&gx1);
-        let xn = Fp::conditional_select(&x2n, &x1n, e2);
-        let mut y = Fp::conditional_select(&y2, &y1, e2);
-        let e3 = y.sgn0() ^ u.sgn0();
-        y.conditional_negate(e3);
+        // compute g(x0(u))
+        let x_densq = x_den.square();
+        let gx_den = x_densq * x_den;
+        // x0_num^3 + A * x0_num * x_den^2 + B * x_den^3
+        let gx0_num = (x0_num.square() + SSWU_ELLP_A * x_densq) * x0_num + SSWU_ELLP_B * gx_den;
+
+        // compute g(X0(u)) ^ ((p - 3) // 4)
+        let sqrt_candidate = {
+            let u_v = gx0_num * gx_den; // u*v
+            let vsq = gx_den.square(); // v^2
+            u_v * chain_pm3div4(&(u_v * vsq)) // u v (u v^3) ^ ((p - 3) // 4)
+        };
+
+        let gx0_square = (sqrt_candidate.square() * gx_den).ct_eq(&gx0_num); // g(x0) is square
+        let x1_num = x0_num * xi_usq;
+        // sqrt(-XI**3) * u^3 g(x0) ^ ((p - 1) // 4)
+        let y1 = SQRT_M_XI_CUBED * usq * u * sqrt_candidate;
+
+        let x_num = Fp::conditional_select(&x1_num, &x0_num, gx0_square);
+        let mut y = Fp::conditional_select(&y1, &sqrt_candidate, gx0_square);
+        // ensure sign of y and sign of u agree
+        y.conditional_negate(!(y.lexicographically_largest() ^ u.lexicographically_largest()));
 
         G1Projective {
-            x: xn,
-            y: y * xd,
-            z: xd,
+            x: x_num,
+            y: y * x_den,
+            z: x_den,
         }
-
-        // // compute g(X0(u)) ^ ((p - 3) // 4)
-        // let sqrt_candidate = {
-        //     let mut tmp1 = gx0_num;
-        //     tmp1.mul_assign(&gx0_den); // u * v
-        //     let mut tmp2 = gx0_den.square(); // v^2
-        //     tmp2.mul_assign(&tmp1); // u * v^3
-        //     let tmp3 = tmp2;
-        //     chain_pm3div4(&mut tmp2, &tmp3); // (u v^3) ^ ((p - 3) // 4)
-        //     tmp2.mul_assign(&tmp1); // u v (u v^3) ^ ((p - 3) // 4)
-        //     tmp2
-        // };
-
-        // // select correct values for y and for x numerator
-        // let (mut x_num, mut y) = {
-        //     let mut test_cand = sqrt_candidate.square();
-        //     test_cand.mul_assign(&gx0_den);
-        //     let mut x1_num = x0_num;
-        //     x1_num.mul_assign(&xi_usq); // x1 = xi u^2 g(x0)
-        //     let mut y1 = usq; // y1 = sqrt(-xi**3) * u^3 g(x0) ^ ((p - 1) // 4)
-        //     y1.mul_assign(u);
-        //     y1.mul_assign(&sqrt_candidate);
-        //     y1.mul_assign(&SQRT_M_XI_CUBED);
-        //     let gx0_square = test_cand.ct_eq(&gx0_num); // g(x0) is square
-        //     (
-        //         Fp::conditional_select(&x1_num, &x0_num, gx0_square),
-        //         Fp::conditional_select(&y1, &sqrt_candidate, gx0_square),
-        //     )
-        // };
-
-        // // make sure sign of y and sign of u agree
-        // let sgn0_y_xor_u = y.sgn0() ^ u.sgn0();
-        // y.conditional_negate(sgn0_y_xor_u);
-
-        // G1Projective {
-        //     x: x_num,
-        //     y: y * x0_den,
-        //     z: x0_den,
-        // }
     }
 
     fn clear_h(&mut self) {
@@ -607,171 +608,12 @@ impl MessageToField for G1Projective {
     }
 }
 
-#[test]
-fn test_projective_iso11_zero() {
-    let zero = Fp::zero();
-    let mut pt = G1Projective {
-        x: Fp::zero(),
-        y: Fp::zero(),
-        z: Fp::zero(),
-    };
-    pt.isogeny_map();
-    assert_eq!(pt.x, zero);
-    assert_eq!(pt.y, zero);
-    assert_eq!(pt.z, zero);
-}
-
-#[test]
-fn test_projective_iso11_one() {
-    let mut pt = G1Projective {
-        x: Fp::one(),
-        y: Fp::one(),
-        z: Fp::one(),
-    };
-    println!("from {}", crate::g1::G1Affine::from(pt));
-    println!(
-        "from {}",
-        hex::encode(&crate::g1::G1Affine::from(pt).to_compressed()[..])
-    );
-
-    pt.isogeny_map();
-    assert!(bool::from(pt.is_on_curve()));
-    let xo = Fp::from_raw_unchecked([
-        0xb129fab9bef88edd,
-        0x1c5429e2f4b8bc35,
-        0xcaab8cc9ec4893f2,
-        0x9e9c31f30a607c8b,
-        0x9661fcf22bedfddb,
-        0x10fc4a3ba5f48e07,
-    ]);
-    let yo = Fp::from_raw_unchecked([
-        0xaf52c5fbd490f370u64,
-        0x1533c0f27b46c02fu64,
-        0xc8890dd0987b134fu64,
-        0x43e2d5f172257d50u64,
-        0x538ebef63fb145beu64,
-        0x11eab1145b95cb9fu64,
-    ]);
-    let zo = Fp::from_raw_unchecked([
-        0x7441c43513e11f49u64,
-        0x620b0af2483ad30fu64,
-        0x678c5bf3ad4090b4u64,
-        0xc75152c6f387d070u64,
-        0x5f3cc0ed1bd3f0eeu64,
-        0x12514e630a486abbu64,
-    ]);
-
-    let xo = xo * zo; // * zo.invert().unwrap();
-    let yo = yo * zo; // * zo; //zo.invert().unwrap() * zo.invert().unwrap();
-    println!(
-        "expect {:#x?}",
-        G1Projective {
-            x: xo,
-            y: yo,
-            z: zo
-        }
-    );
-    println!(
-        "?? {}",
-        crate::g1::G1Affine::from(G1Projective {
-            x: xo,
-            y: yo,
-            z: zo
-        })
-    );
-    println!(
-        "?? {}",
-        hex::encode(
-            &crate::g1::G1Affine::from(G1Projective {
-                x: xo,
-                y: yo,
-                z: zo
-            })
-            .to_compressed()[..]
-        )
-    );
-
-    println!("got {:#x?}", pt);
-
-    assert_eq!(&pt.x, &xo);
-    assert_eq!(&pt.y, &yo);
-    assert_eq!(&pt.z, &zo);
-}
-
-#[test]
-fn test_projective_iso11_fixed() {
-    let xi = Fp::from_raw_unchecked([
-        0xf6adc4118ae592abu64,
-        0xa384a7ab165def35u64,
-        0x2365b1fb1c8a73bfu64,
-        0xc40dc338ca285231u64,
-        0x47ff3364428c59b3u64,
-        0x1789051238d025e3u64,
-    ]);
-    let yi = Fp::from_raw_unchecked([
-        0x1a635634e9cced27u64,
-        0x03f604e47bc51aa9u64,
-        0x06f6ff472fa7276eu64,
-        0x0459ed10f1f8abb1u64,
-        0x8e76c82bd4a29d21u64,
-        0x088cb5712bf81924u64,
-    ]);
-    let zi = Fp::from_raw_unchecked([
-        0x0416411fe2e97d06u64,
-        0xaced7fec7a63fe65u64,
-        0x683295bcaed54202u64,
-        0xbdc3405df9ff0a3bu64,
-        0xf9698f57510273fbu64,
-        0x064bb4b501466b2au64,
-    ]);
-
-    let mut pt = G1Projective {
-        x: xi,
-        y: yi,
-        z: zi,
-    };
-    pt.isogeny_map();
-    assert_eq!(
-        pt.x,
-        Fp::from_raw_unchecked([
-            0x98fd5875e4a58e20,
-            0xf00708855ba24728,
-            0xc54b92477ec91cf8,
-            0x62147c9f75dc4da0,
-            0x784ea4acc57cc997,
-            0x13f1dc06973b63c2
-        ])
-    );
-    assert_eq!(
-        pt.y,
-        Fp::from_raw_unchecked([
-            0x641ce4fa319fb527,
-            0xb25350f92bb911f0,
-            0x60f575e35412341a,
-            0x7cc7cdd785a14540,
-            0x912d881277ec9fbf,
-            0x3dd9bf1f358a671,
-        ])
-    );
-    assert_eq!(
-        pt.z,
-        Fp::from_raw_unchecked([
-            0xc52c49bfd570446c,
-            0x2673d927b164af30,
-            0x2ab772e0665915f1,
-            0xd5dc90b3e7644d3d,
-            0xccce39bd5f3ee359,
-            0xeaa09526b938f64,
-        ])
-    );
-}
-
 #[cfg(test)]
 fn check_g1_prime(x: &Fp, y: &Fp, z: &Fp) -> subtle::Choice {
     // (X : Y : Z)==(X/Z, Y/Z) is on E: y^2 = x^3 + ELLP_A * x + ELLP_B.
     // y^2 z = (x^3) + A (x z^2) + B z^3
     let zsq = z.square();
-    (y.square() * z).ct_eq(&(x.square() * x + ELLP_A * x * zsq + ELLP_B * zsq * z))
+    (y.square() * z).ct_eq(&(x.square() * x + SSWU_ELLP_A * x * zsq + SSWU_ELLP_B * zsq * z))
 }
 
 #[test]

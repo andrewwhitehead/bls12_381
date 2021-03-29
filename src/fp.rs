@@ -616,10 +616,11 @@ impl Fp {
         Self::montgomery_reduce(t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11)
     }
 
-    /// Returns the sign of a center lifted element over the integer ring
+    /// Returns either 0 or 1 indicating the "sign" of x, where sgn0(x) == 1
+    /// just when x is "negative". (In other words, this function always considers 0 to be positive.)
     /// https://tools.ietf.org/html/draft-irtf-cfrg-hash-to-curve-10#section-4.1
     #[inline]
-    pub fn sgn0(&self) -> Choice {
+    pub(crate) fn sgn0(&self) -> Choice {
         let tmp = Fp::montgomery_reduce(
             self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5], 0, 0, 0, 0, 0, 0,
         );
