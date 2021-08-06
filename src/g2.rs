@@ -997,6 +997,8 @@ impl G2Projective {
         (self.y.square() * self.z).ct_eq(&(self.x.square() * self.x + self.z.square() * self.z * B))
             | self.z.is_zero()
     }
+
+    impl_pippenger_sum_of_products!();
 }
 
 pub struct G2Compressed([u8; 96]);
@@ -2093,4 +2095,72 @@ fn test_batch_normalize() {
             }
         }
     }
+}
+
+#[test]
+fn test_sum_of_products() {
+    use ff::Field;
+    use rand_core::SeedableRng;
+    use rand_xorshift::XorShiftRng;
+
+    let seed = [1u8; 16];
+    let mut rng = XorShiftRng::from_seed(seed);
+
+    let h0 = G2Projective::random(&mut rng);
+
+    let s = Scalar::random(&mut rng);
+    let s_tilde = Scalar::random(&mut rng);
+    let c = Scalar::random(&mut rng);
+
+    assert_eq!(
+        h0 * s,
+        G2Projective::sum_of_products_in_place(&[h0], &mut [s])
+    );
+    assert_eq!(
+        h0 * s_tilde,
+        G2Projective::sum_of_products_in_place(&[h0], &mut [s_tilde])
+    );
+
+    // test schnorr proof
+    let u = h0 * s;
+    let u_tilde = h0 * s_tilde;
+    let s_hat = s_tilde - c * s;
+    assert_eq!(u_tilde, u * c + h0 * s_hat);
+    assert_eq!(
+        u_tilde,
+        G2Projective::sum_of_products_in_place(&[u, h0], &mut [c, s_hat])
+    );
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn test_sum_of_products_alloc() {
+    use ff::Field;
+    use rand_core::SeedableRng;
+    use rand_xorshift::XorShiftRng;
+
+    let seed = [1u8; 16];
+    let mut rng = XorShiftRng::from_seed(seed);
+
+    let h0 = G2Projective::random(&mut rng);
+
+    let s = Scalar::random(&mut rng);
+    let s_tilde = Scalar::random(&mut rng);
+    let c = Scalar::random(&mut rng);
+
+    assert_eq!(h0 * s, G2Projective::sum_of_products(&[h0], &mut [s]));
+    assert_eq!(
+        h0 * s_tilde,
+        G2Projective::sum_of_products(&[h0], &mut [s_tilde])
+    );
+
+    // test schnorr proof
+    let u = h0 * s;
+    let u_tilde = h0 * s_tilde;
+    let s_hat = s_tilde - c * s;
+    assert_eq!(u_tilde, u * c + h0 * s_hat);
+    assert_eq!(
+        u_tilde,
+        G2Projective::sum_of_products(&[u, h0], &mut [c, s_hat])
+    );
 }
