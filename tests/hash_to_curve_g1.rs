@@ -100,7 +100,8 @@ mod tests {
 
         for case in cases {
             let g = <G1Projective as HashToCurve<ExpandMsgXmd<Sha256>>>::hash_to_curve(
-                case.msg, case.dst,
+                [case.msg],
+                case.dst,
             );
             let aff = G1Affine::from(g);
             let g_uncompressed = aff.to_uncompressed();
@@ -179,7 +180,8 @@ mod tests {
 
         for case in cases {
             let g = <G1Projective as HashToCurve<ExpandMsgXmd<Sha256>>>::encode_to_curve(
-                case.msg, case.dst,
+                [case.msg],
+                case.dst,
             );
             let aff = G1Affine::from(g);
             let g_uncompressed = aff.to_uncompressed();
