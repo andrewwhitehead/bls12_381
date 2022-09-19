@@ -2,11 +2,76 @@ use crate::fp::*;
 use crate::fp2::*;
 
 use core::fmt;
-use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use core::ops;
+
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
 #[cfg(feature = "pairings")]
 use rand_core::RngCore;
+
+pub(crate) const FP6_FROBENIUS_COEFFS_1: [Fp; 3] = [
+    Fp::one(),
+    Fp::from_hex_unchecked(
+        "1a0111ea397fe699\
+         ec02408663d4de85\
+         aa0d857d89759ad4\
+         897d29650fb85f9b\
+         409427eb4f49fffd\
+         8bfd00000000aaac",
+    ),
+    Fp::from_hex_unchecked(
+        "0000000000000000\
+         5f19672fdf76ce51\
+         ba69c6076a0f77ea\
+         ddb3a93be6f89688\
+         de17d813620a0002\
+         2e01fffffffefffe",
+    ),
+];
+
+pub(crate) const FP6_FROBENIUS_COEFFS_2: [Fp; 6] = [
+    Fp::one(),
+    Fp::from_hex_unchecked(
+        "1a0111ea397fe699\
+         ec02408663d4de85\
+         aa0d857d89759ad4\
+         897d29650fb85f9b\
+         409427eb4f49fffd\
+         8bfd00000000aaad",
+    ),
+    Fp::from_hex_unchecked(
+        "1a0111ea397fe699\
+         ec02408663d4de85\
+         aa0d857d89759ad4\
+         897d29650fb85f9b\
+         409427eb4f49fffd\
+         8bfd00000000aaac",
+    ),
+    Fp::from_hex_unchecked(
+        "1a0111ea397fe69a\
+         4b1ba7b6434bacd7\
+         64774b84f38512bf\
+         6730d2a0f6b0f624\
+         1eabfffeb153ffff\
+         b9feffffffffaaaa",
+    ),
+    Fp::from_hex_unchecked(
+        "0000000000000000\
+         5f19672fdf76ce51\
+         ba69c6076a0f77ea\
+         ddb3a93be6f89688\
+         de17d813620a0002\
+         2e01fffffffefffe",
+    ),
+    Fp::from_hex_unchecked(
+        "0000000000000000\
+         5f19672fdf76ce51\
+         ba69c6076a0f77ea\
+         ddb3a93be6f89688\
+         de17d813620a0002\
+         2e01fffffffeffff",
+    ),
+];
 
 /// This represents an element $c_0 + c_1 v + c_2 v^2$ of $\mathbb{F}_{p^6} = \mathbb{F}_{p^2} / v^3 - u - 1$.
 pub struct Fp6 {
@@ -16,6 +81,7 @@ pub struct Fp6 {
 }
 
 impl From<Fp> for Fp6 {
+    #[inline]
     fn from(f: Fp) -> Fp6 {
         Fp6 {
             c0: Fp2::from(f),
@@ -26,6 +92,7 @@ impl From<Fp> for Fp6 {
 }
 
 impl From<Fp2> for Fp6 {
+    #[inline]
     fn from(f: Fp2) -> Fp6 {
         Fp6 {
             c0: f,
@@ -84,7 +151,7 @@ impl ConstantTimeEq for Fp6 {
 
 impl Fp6 {
     #[inline]
-    pub fn zero() -> Self {
+    pub const fn zero() -> Self {
         Fp6 {
             c0: Fp2::zero(),
             c1: Fp2::zero(),
@@ -93,7 +160,7 @@ impl Fp6 {
     }
 
     #[inline]
-    pub fn one() -> Self {
+    pub const fn one() -> Self {
         Fp6 {
             c0: Fp2::one(),
             c1: Fp2::zero(),
@@ -111,30 +178,20 @@ impl Fp6 {
     }
 
     pub fn mul_by_1(&self, c1: &Fp2) -> Fp6 {
-        let b_b = self.c1 * c1;
-
-        let t1 = (self.c1 + self.c2) * c1 - b_b;
-        let t1 = t1.mul_by_nonresidue();
-
-        let t2 = (self.c0 + self.c1) * c1 - b_b;
-
         Fp6 {
-            c0: t1,
-            c1: t2,
-            c2: b_b,
+            c0: (self.c2 * c1).mul_by_nonresidue(),
+            c1: self.c0 * c1,
+            c2: self.c1 * c1,
         }
     }
 
     pub fn mul_by_01(&self, c0: &Fp2, c1: &Fp2) -> Fp6 {
-        let a_a = self.c0 * c0;
-        let b_b = self.c1 * c1;
+        let t1 = self.c2 * c1;
+        let t1 = t1.mul_by_nonresidue() + self.c0 * c0;
 
-        let t1 = (self.c1 + self.c2) * c1 - b_b;
-        let t1 = t1.mul_by_nonresidue() + a_a;
+        let t2 = self.c1 * c0 + self.c0 * c1;
 
-        let t2 = (c0 + c1) * (self.c0 + self.c1) - a_a - b_b;
-
-        let t3 = (self.c0 + self.c2) * c0 - a_a + b_b;
+        let t3 = self.c2 * c0 + self.c1 * c1;
 
         Fp6 {
             c0: t1,
@@ -144,7 +201,7 @@ impl Fp6 {
     }
 
     /// Multiply by quadratic nonresidue v.
-    pub fn mul_by_nonresidue(&self) -> Self {
+    pub const fn mul_by_nonresidue(&self) -> Self {
         // Given a + bv + cv^2, this produces
         //     av + bv^2 + cv^3
         // but because v^3 = u + 1, we have
@@ -157,42 +214,55 @@ impl Fp6 {
         }
     }
 
-    /// Raises this element to p.
+    /// Raises this element to p^n.
     #[inline(always)]
-    pub fn frobenius_map(&self) -> Self {
-        let c0 = self.c0.frobenius_map();
-        let c1 = self.c1.frobenius_map();
-        let c2 = self.c2.frobenius_map();
+    pub fn frobenius_map(&self, n: usize) -> Self {
+        let c0 = self.c0.frobenius_map(n);
+        let c1 = self.c1.frobenius_map(n);
+        let c2 = self.c2.frobenius_map(n);
 
-        // c1 = c1 * (u + 1)^((p - 1) / 3)
-        let c1 = c1
-            * Fp2 {
-                c0: Fp::zero(),
-                c1: Fp::from_raw_unchecked([
-                    0xcd03_c9e4_8671_f071,
-                    0x5dab_2246_1fcd_a5d2,
-                    0x5870_42af_d385_1b95,
-                    0x8eb6_0ebe_01ba_cb9e,
-                    0x03f9_7d6e_83d0_50d2,
-                    0x18f0_2065_5463_8741,
-                ]),
-            };
+        let gamma_1 = {
+            // (u + 1)^((p^n - 1) / 3)
+            // sample code for coefficient verification:
+            // use crypto_bigint::U384;
+            // let u_plus_1 = Fp2 {
+            //     c0: Fp::one(),
+            //     c1: Fp::one(),
+            // };
+            // let p_m1_over_3 = U384::from_be_hex(
+            //     "08ab05f8bdd54cde190937e76bc3e447cc27c3d6fbd7063fcd104635a790520c0a395554e5c6aaaa9354ffffffffe38e"
+            // );
+            // let t0 = Fp2::one();
+            // let t1 = u_plus_1.pow_vartime(p_m1_over_3.as_words());
+            // let t2 = t1.conjugate() * t1;
+            // let t3 = t1 * t2;
+            // let t4 = t1.conjugate() * t3;
+            // let t5 = t1 * t4;
 
-        // c2 = c2 * (u + 1)^((2p - 2) / 3)
-        let c2 = c2
-            * Fp2 {
-                c0: Fp::from_raw_unchecked([
-                    0x890d_c9e4_8675_45c3,
-                    0x2af3_2253_3285_a5d5,
-                    0x5088_0866_309b_7e2c,
-                    0xa20d_1b8c_7e88_1024,
-                    0x14e4_f04f_e2db_9068,
-                    0x14e5_6d3f_1564_853a,
-                ]),
-                c1: Fp::zero(),
-            };
+            let coeff = FP6_FROBENIUS_COEFFS_1[n % 3];
+            if n % 2 == 1 {
+                Fp2 {
+                    c0: Fp::zero(),
+                    c1: coeff,
+                }
+            } else {
+                Fp2 {
+                    c0: coeff,
+                    c1: Fp::zero(),
+                }
+            }
+        };
+        let gamma_2 = {
+            // (u + 1)^((2p^n - 2) / 3)
+            // = gamma_1^2
+            Fp2::from(FP6_FROBENIUS_COEFFS_2[n % 6])
+        };
 
-        Fp6 { c0, c1, c2 }
+        Fp6 {
+            c0,
+            c1: c1.mul(&gamma_1),
+            c2: c2.mul(&gamma_2),
+        }
     }
 
     #[inline(always)]
@@ -250,32 +320,32 @@ impl Fp6 {
         Fp6 {
             c0: Fp2 {
                 c0: Fp::sum_of_products(
-                    [a.c0.c0, -a.c0.c1, a.c1.c0, -a.c1.c1, a.c2.c0, -a.c2.c1],
-                    [b.c0.c0, b.c0.c1, b20_m_b21, b20_p_b21, b10_m_b11, b10_p_b11],
+                    &[a.c0.c0, -a.c0.c1, a.c1.c0, -a.c1.c1, a.c2.c0, -a.c2.c1],
+                    &[b.c0.c0, b.c0.c1, b20_m_b21, b20_p_b21, b10_m_b11, b10_p_b11],
                 ),
                 c1: Fp::sum_of_products(
-                    [a.c0.c0, a.c0.c1, a.c1.c0, a.c1.c1, a.c2.c0, a.c2.c1],
-                    [b.c0.c1, b.c0.c0, b20_p_b21, b20_m_b21, b10_p_b11, b10_m_b11],
+                    &[a.c0.c0, a.c0.c1, a.c1.c0, a.c1.c1, a.c2.c0, a.c2.c1],
+                    &[b.c0.c1, b.c0.c0, b20_p_b21, b20_m_b21, b10_p_b11, b10_m_b11],
                 ),
             },
             c1: Fp2 {
                 c0: Fp::sum_of_products(
-                    [a.c0.c0, -a.c0.c1, a.c1.c0, -a.c1.c1, a.c2.c0, -a.c2.c1],
-                    [b.c1.c0, b.c1.c1, b.c0.c0, b.c0.c1, b20_m_b21, b20_p_b21],
+                    &[a.c0.c0, -a.c0.c1, a.c1.c0, -a.c1.c1, a.c2.c0, -a.c2.c1],
+                    &[b.c1.c0, b.c1.c1, b.c0.c0, b.c0.c1, b20_m_b21, b20_p_b21],
                 ),
                 c1: Fp::sum_of_products(
-                    [a.c0.c0, a.c0.c1, a.c1.c0, a.c1.c1, a.c2.c0, a.c2.c1],
-                    [b.c1.c1, b.c1.c0, b.c0.c1, b.c0.c0, b20_p_b21, b20_m_b21],
+                    &[a.c0.c0, a.c0.c1, a.c1.c0, a.c1.c1, a.c2.c0, a.c2.c1],
+                    &[b.c1.c1, b.c1.c0, b.c0.c1, b.c0.c0, b20_p_b21, b20_m_b21],
                 ),
             },
             c2: Fp2 {
                 c0: Fp::sum_of_products(
-                    [a.c0.c0, -a.c0.c1, a.c1.c0, -a.c1.c1, a.c2.c0, -a.c2.c1],
-                    [b.c2.c0, b.c2.c1, b.c1.c0, b.c1.c1, b.c0.c0, b.c0.c1],
+                    &[a.c0.c0, -a.c0.c1, a.c1.c0, -a.c1.c1, a.c2.c0, -a.c2.c1],
+                    &[b.c2.c0, b.c2.c1, b.c1.c0, b.c1.c1, b.c0.c0, b.c0.c1],
                 ),
                 c1: Fp::sum_of_products(
-                    [a.c0.c0, a.c0.c1, a.c1.c0, a.c1.c1, a.c2.c0, a.c2.c1],
-                    [b.c2.c1, b.c2.c0, b.c1.c1, b.c1.c0, b.c0.c1, b.c0.c0],
+                    &[a.c0.c0, a.c0.c1, a.c1.c0, a.c1.c1, a.c2.c0, a.c2.c1],
+                    &[b.c2.c1, b.c2.c0, b.c1.c1, b.c1.c0, b.c0.c1, b.c0.c0],
                 ),
             },
         }
@@ -285,10 +355,10 @@ impl Fp6 {
     pub fn square(&self) -> Self {
         let s0 = self.c0.square();
         let ab = self.c0 * self.c1;
-        let s1 = ab + ab;
+        let s1 = ab.double();
         let s2 = (self.c0 - self.c1 + self.c2).square();
         let bc = self.c1 * self.c2;
-        let s3 = bc + bc;
+        let s3 = bc.double();
         let s4 = self.c2.square();
 
         Fp6 {
@@ -318,9 +388,25 @@ impl Fp6 {
             c2: t * c2,
         })
     }
+
+    pub const fn double(&self) -> Self {
+        Fp6 {
+            c0: self.c0.double(),
+            c1: self.c1.double(),
+            c2: self.c2.double(),
+        }
+    }
+
+    pub const fn neg(&self) -> Self {
+        Fp6 {
+            c0: self.c0.neg(),
+            c1: self.c1.neg(),
+            c2: self.c2.neg(),
+        }
+    }
 }
 
-impl<'a, 'b> Mul<&'b Fp6> for &'a Fp6 {
+impl<'a, 'b> ops::Mul<&'b Fp6> for &'a Fp6 {
     type Output = Fp6;
 
     #[inline]
@@ -329,7 +415,7 @@ impl<'a, 'b> Mul<&'b Fp6> for &'a Fp6 {
     }
 }
 
-impl<'a, 'b> Add<&'b Fp6> for &'a Fp6 {
+impl<'a, 'b> ops::Add<&'b Fp6> for &'a Fp6 {
     type Output = Fp6;
 
     #[inline]
@@ -342,7 +428,7 @@ impl<'a, 'b> Add<&'b Fp6> for &'a Fp6 {
     }
 }
 
-impl<'a> Neg for &'a Fp6 {
+impl<'a> ops::Neg for &'a Fp6 {
     type Output = Fp6;
 
     #[inline]
@@ -355,7 +441,7 @@ impl<'a> Neg for &'a Fp6 {
     }
 }
 
-impl Neg for Fp6 {
+impl ops::Neg for Fp6 {
     type Output = Fp6;
 
     #[inline]
@@ -364,7 +450,7 @@ impl Neg for Fp6 {
     }
 }
 
-impl<'a, 'b> Sub<&'b Fp6> for &'a Fp6 {
+impl<'a, 'b> ops::Sub<&'b Fp6> for &'a Fp6 {
     type Output = Fp6;
 
     #[inline]
@@ -566,6 +652,12 @@ fn test_arithmetic() {
         (a * b).invert().unwrap()
     );
     assert_eq!(a.invert().unwrap() * a, Fp6::one());
+
+    assert_ne!(a, a.frobenius_map(1));
+    for i in 0..12 {
+        assert_eq!(a.frobenius_map(i).frobenius_map(1), a.frobenius_map(i + 1));
+    }
+    assert_eq!(a, a.frobenius_map(6));
 }
 
 #[cfg(feature = "zeroize")]

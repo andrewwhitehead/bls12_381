@@ -2,11 +2,11 @@
 //! where `q = 0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001`
 
 use core::fmt;
-use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
-use rand_core::RngCore;
+use core::ops;
 
 use crypto_bigint::{nlimbs, Encoding, Zero, U256};
 use ff::{Field, PrimeField};
+use rand_core::RngCore;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
 #[cfg(feature = "bits")]
@@ -83,7 +83,7 @@ const GENERATOR: Inner = Inner::from_be_hex(
      0000000efffffff1",
 );
 
-impl<'a> Neg for &'a Scalar {
+impl<'a> ops::Neg for &'a Scalar {
     type Output = Scalar;
 
     #[inline]
@@ -92,7 +92,7 @@ impl<'a> Neg for &'a Scalar {
     }
 }
 
-impl Neg for Scalar {
+impl ops::Neg for Scalar {
     type Output = Scalar;
 
     #[inline]
@@ -101,7 +101,7 @@ impl Neg for Scalar {
     }
 }
 
-impl<'a, 'b> Sub<&'b Scalar> for &'a Scalar {
+impl<'a, 'b> ops::Sub<&'b Scalar> for &'a Scalar {
     type Output = Scalar;
 
     #[inline]
@@ -110,7 +110,7 @@ impl<'a, 'b> Sub<&'b Scalar> for &'a Scalar {
     }
 }
 
-impl<'a, 'b> Add<&'b Scalar> for &'a Scalar {
+impl<'a, 'b> ops::Add<&'b Scalar> for &'a Scalar {
     type Output = Scalar;
 
     #[inline]
@@ -119,7 +119,7 @@ impl<'a, 'b> Add<&'b Scalar> for &'a Scalar {
     }
 }
 
-impl<'a, 'b> Mul<&'b Scalar> for &'a Scalar {
+impl<'a, 'b> ops::Mul<&'b Scalar> for &'a Scalar {
     type Output = Scalar;
 
     #[inline]
@@ -159,6 +159,9 @@ impl Default for Scalar {
 impl zeroize::DefaultIsZeroes for Scalar {}
 
 impl Scalar {
+    /// The maximum size of a scalar value in bits.
+    pub const BIT_SIZE: usize = 255;
+
     /// Returns zero, the additive identity.
     #[inline]
     pub const fn zero() -> Scalar {
@@ -183,6 +186,12 @@ impl Scalar {
         FIELD
             .try_from_canonical(&Inner::from_le_bytes(*bytes))
             .map(|s| Scalar(s))
+    }
+
+    /// Convert a big-endian hex representation of a scalar into a `Scalar`
+    /// without checking that it is canonical.
+    pub const fn from_hex_unchecked(s: &str) -> Scalar {
+        Scalar(FIELD.from_canonical(&Inner::from_be_hex(s)))
     }
 
     /// Converts an element of `Scalar` into a byte representation in
@@ -433,6 +442,12 @@ impl Scalar {
     #[inline]
     pub const fn neg(&self) -> Self {
         Scalar(FIELD.neg(&self.0))
+    }
+
+    /// Get the bit value at index `index`.
+    #[inline]
+    pub const fn bit(&self, index: usize) -> u8 {
+        self.0.bit_vartime(index) as u8
     }
 }
 

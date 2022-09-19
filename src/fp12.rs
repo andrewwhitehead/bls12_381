@@ -3,11 +3,33 @@ use crate::fp2::*;
 use crate::fp6::*;
 
 use core::fmt;
-use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use core::ops;
+
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
 #[cfg(feature = "pairings")]
 use rand_core::RngCore;
+
+pub(crate) const FP12_FROBENIUS_COEFFS: [Fp2; 3] = [
+    Fp2 {
+        c0: Fp::from_hex_unchecked(
+        "1904d3bf02bb0667c231beb4202c0d1f0fd603fd3cbd5f4f7b2443d784bab9c4f67ea53d63e7813d8d0775ed92235fb8"
+        ),
+        c1: Fp::from_hex_unchecked("00fc3e2b36c4e03288e9e902231f9fb854a14787b6c7b36fec0c8ec971f63c5f282d5ac14d6c7ec22cf78a126ddc4af3"),
+    },
+    Fp2 {
+        c0: Fp::from_hex_unchecked(
+        "135203e60180a68ee2e9c448d77a2cd91c3dedd930b1cf60ef396489f61eb45e304466cf3e67fa0af1ee7b04121bdea2"
+        ),
+        c1: Fp::from_hex_unchecked("06af0e0437ff400b6831e36d6bd17ffe48395dabc2d3435e77f76e17009241c5ee67992f72ec05f4c81084fbede3cc09"),
+    },
+    Fp2 {
+        c0: Fp::from_hex_unchecked(
+        "144e4211384586c16bd3ad4afa99cc9170df3560e77982d0db45f3536814f0bd5871c1908bd478cd1ee605167ff82995"
+        ),
+        c1: Fp::from_hex_unchecked("05b2cfd9013a5fd8df47fa6b48b1e045f39816240c0b8fee8beadf4d8e9c0566c63a3e6e257f87329b18fae980078116"),
+    }
+];
 
 /// This represents an element $c_0 + c_1 w$ of $\mathbb{F}_{p^12} = \mathbb{F}_{p^6} / w^2 - v$.
 pub struct Fp12 {
@@ -90,7 +112,7 @@ impl ConstantTimeEq for Fp12 {
 
 impl Fp12 {
     #[inline]
-    pub fn zero() -> Self {
+    pub const fn zero() -> Self {
         Fp12 {
             c0: Fp6::zero(),
             c1: Fp6::zero(),
@@ -98,7 +120,7 @@ impl Fp12 {
     }
 
     #[inline]
-    pub fn one() -> Self {
+    pub const fn one() -> Self {
         Fp12 {
             c0: Fp6::one(),
             c1: Fp6::zero(),
@@ -133,39 +155,45 @@ impl Fp12 {
     }
 
     #[inline(always)]
-    pub fn conjugate(&self) -> Self {
+    pub const fn conjugate(&self) -> Self {
         Fp12 {
             c0: self.c0,
-            c1: -self.c1,
+            c1: self.c1.neg(),
         }
     }
 
-    /// Raises this element to p.
+    /// Raises this element to p^n.
     #[inline(always)]
-    pub fn frobenius_map(&self) -> Self {
-        let c0 = self.c0.frobenius_map();
-        let c1 = self.c1.frobenius_map();
+    pub fn frobenius_map(&self, n: usize) -> Self {
+        let c0 = self.c0.frobenius_map(n);
+        let c1 = self.c1.frobenius_map(n);
 
-        // c1 = c1 * (u + 1)^((p - 1) / 6)
-        let c1 = c1
-            * Fp6::from(Fp2 {
-                c0: Fp::from_raw_unchecked([
-                    0x0708_9552_b319_d465,
-                    0xc669_5f92_b50a_8313,
-                    0x97e8_3ccc_d117_228f,
-                    0xa35b_aeca_b2dc_29ee,
-                    0x1ce3_93ea_5daa_ce4d,
-                    0x08f2_220f_b0fb_66eb,
-                ]),
-                c1: Fp::from_raw_unchecked([
-                    0xb2f6_6aad_4ce5_d646,
-                    0x5842_a06b_fc49_7cec,
-                    0xcf48_95d4_2599_d394,
-                    0xc11b_9cba_40a8_e8d0,
-                    0x2e38_13cb_e5a0_de89,
-                    0x110e_efda_8884_7faf,
-                ]),
-            });
+        // gamma = (u + 1)^((p^n - 1) / 6)
+        // this is simply a roundabout way of reducing the number
+        // of duplicate precomputed values.
+        let gamma = if n % 2 == 0 {
+            Fp2 {
+                c0: FP6_FROBENIUS_COEFFS_2[5 - ((n / 2 + 5) % 6)],
+                c1: Fp::zero(),
+            }
+        } else {
+            let nb = ((n - 1) / 2) % 12;
+            let coeff = FP12_FROBENIUS_COEFFS[nb % 3];
+            if nb >= 3 {
+                Fp2 {
+                    c0: coeff.c1,
+                    c1: coeff.c0,
+                }
+            } else {
+                coeff
+            }
+        };
+
+        let c1 = Fp6 {
+            c0: c1.c0.mul(&gamma),
+            c1: c1.c1.mul(&gamma),
+            c2: c1.c2.mul(&gamma),
+        };
 
         Fp12 { c0, c1 }
     }
@@ -178,7 +206,7 @@ impl Fp12 {
         let c0 = c0 + self.c0;
         let c0 = c0 * c0c1;
         let c0 = c0 - ab;
-        let c1 = ab + ab;
+        let c1 = ab.double();
         let c0 = c0 - ab.mul_by_nonresidue();
 
         Fp12 { c0, c1 }
@@ -194,7 +222,7 @@ impl Fp12 {
     }
 }
 
-impl<'a, 'b> Mul<&'b Fp12> for &'a Fp12 {
+impl<'a, 'b> ops::Mul<&'b Fp12> for &'a Fp12 {
     type Output = Fp12;
 
     #[inline]
@@ -213,7 +241,7 @@ impl<'a, 'b> Mul<&'b Fp12> for &'a Fp12 {
     }
 }
 
-impl<'a, 'b> Add<&'b Fp12> for &'a Fp12 {
+impl<'a, 'b> ops::Add<&'b Fp12> for &'a Fp12 {
     type Output = Fp12;
 
     #[inline]
@@ -225,7 +253,7 @@ impl<'a, 'b> Add<&'b Fp12> for &'a Fp12 {
     }
 }
 
-impl<'a> Neg for &'a Fp12 {
+impl<'a> ops::Neg for &'a Fp12 {
     type Output = Fp12;
 
     #[inline]
@@ -237,7 +265,7 @@ impl<'a> Neg for &'a Fp12 {
     }
 }
 
-impl Neg for Fp12 {
+impl ops::Neg for Fp12 {
     type Output = Fp12;
 
     #[inline]
@@ -246,7 +274,7 @@ impl Neg for Fp12 {
     }
 }
 
-impl<'a, 'b> Sub<&'b Fp12> for &'a Fp12 {
+impl<'a, 'b> ops::Sub<&'b Fp12> for &'a Fp12 {
     type Output = Fp12;
 
     #[inline]
@@ -630,22 +658,11 @@ fn test_arithmetic() {
     );
     assert_eq!(a.invert().unwrap() * a, Fp12::one());
 
-    assert!(a != a.frobenius_map());
-    assert_eq!(
-        a,
-        a.frobenius_map()
-            .frobenius_map()
-            .frobenius_map()
-            .frobenius_map()
-            .frobenius_map()
-            .frobenius_map()
-            .frobenius_map()
-            .frobenius_map()
-            .frobenius_map()
-            .frobenius_map()
-            .frobenius_map()
-            .frobenius_map()
-    );
+    assert_ne!(a, a.frobenius_map(1));
+    for i in 0..12 {
+        assert_eq!(a.frobenius_map(i).frobenius_map(1), a.frobenius_map(i + 1));
+    }
+    assert_eq!(a, a.frobenius_map(12));
 }
 
 #[cfg(feature = "zeroize")]

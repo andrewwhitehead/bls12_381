@@ -2,7 +2,8 @@
 //! where `p = 0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaab`
 
 use core::fmt;
-use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use core::ops;
+
 use crypto_bigint::{nlimbs, CheckedSub, Encoding, UInt, Zero, U384};
 use rand_core::RngCore;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
@@ -13,7 +14,7 @@ type Inner = U384;
 
 // The internal representation of this type is six 64-bit unsigned
 // integers in little-endian order. `Fp` values are always in
-// Montgomery form; i.e., Scalar(a) = aR mod p, with R = 2^384.
+// Montgomery form; i.e., Fp(a) = aR mod p, with R = 2^384.
 #[derive(Copy, Clone, Eq)]
 #[repr(transparent)]
 pub struct Fp(pub(crate) Inner);
@@ -67,7 +68,7 @@ const FIELD: Montgomery<{ nlimbs!(384) }> = Montgomery::new(Inner::from_be_hex(
      b9feffffffffaaab",
 ));
 
-impl<'a> Neg for &'a Fp {
+impl<'a> ops::Neg for &'a Fp {
     type Output = Fp;
 
     #[inline]
@@ -76,7 +77,7 @@ impl<'a> Neg for &'a Fp {
     }
 }
 
-impl Neg for Fp {
+impl ops::Neg for Fp {
     type Output = Fp;
 
     #[inline]
@@ -85,7 +86,7 @@ impl Neg for Fp {
     }
 }
 
-impl<'a, 'b> Sub<&'b Fp> for &'a Fp {
+impl<'a, 'b> ops::Sub<&'b Fp> for &'a Fp {
     type Output = Fp;
 
     #[inline]
@@ -94,7 +95,7 @@ impl<'a, 'b> Sub<&'b Fp> for &'a Fp {
     }
 }
 
-impl<'a, 'b> Add<&'b Fp> for &'a Fp {
+impl<'a, 'b> ops::Add<&'b Fp> for &'a Fp {
     type Output = Fp;
 
     #[inline]
@@ -103,7 +104,7 @@ impl<'a, 'b> Add<&'b Fp> for &'a Fp {
     }
 }
 
-impl<'a, 'b> Mul<&'b Fp> for &'a Fp {
+impl<'a, 'b> ops::Mul<&'b Fp> for &'a Fp {
     type Output = Fp;
 
     #[inline]
@@ -198,6 +199,12 @@ impl Fp {
         tmp.checked_sub(&SUB_BY).is_some()
     }
 
+    /// Convert a big-endian hex representation of a scalar into an element
+    /// of `Fp` without checking that it is canonical.
+    pub const fn from_hex_unchecked(s: &str) -> Fp {
+        Fp(FIELD.from_canonical(&Inner::from_be_hex(s)))
+    }
+
     /// Constructs an element of `Fp` without checking that it is
     /// canonical.
     pub const fn from_raw_unchecked(v: [u64; 6]) -> Fp {
@@ -279,11 +286,11 @@ impl Fp {
 
     /// Returns `c = a.zip(b).fold(0, |acc, (a_i, b_i)| acc + a_i * b_i)`.
     #[inline]
-    pub(crate) fn sum_of_products<const T: usize>(a: [Fp; T], b: [Fp; T]) -> Fp {
+    pub(crate) fn sum_of_products<const T: usize>(a: &[Fp; T], b: &[Fp; T]) -> Fp {
         #[allow(unsafe_code)]
-        let ar = unsafe { &*((&a) as *const Fp as *const [Inner; T]) };
+        let ar = unsafe { &*(a as *const Fp as *const [Inner; T]) };
         #[allow(unsafe_code)]
-        let br = unsafe { &*((&b) as *const Fp as *const [Inner; T]) };
+        let br = unsafe { &*(b as *const Fp as *const [Inner; T]) };
         return Fp(FIELD.sum_of_products(ar, br));
     }
 

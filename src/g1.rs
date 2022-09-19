@@ -3,7 +3,7 @@
 use core::borrow::Borrow;
 use core::fmt;
 use core::iter::Sum;
-use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use core::ops;
 use group::{
     prime::{PrimeCurve, PrimeCurveAffine, PrimeGroup},
     Curve, Group, GroupEncoding, UncompressedEncoding,
@@ -28,7 +28,7 @@ use crate::Scalar;
 pub struct G1Affine {
     pub(crate) x: Fp,
     pub(crate) y: Fp,
-    infinity: Choice,
+    infinity: u8,
 }
 
 impl Default for G1Affine {
@@ -55,7 +55,7 @@ impl<'a> From<&'a G1Projective> for G1Affine {
         let tmp = G1Affine {
             x,
             y,
-            infinity: Choice::from(0u8),
+            infinity: 0u8,
         };
 
         G1Affine::conditional_select(&tmp, &G1Affine::identity(), zinv.is_zero())
@@ -69,16 +69,16 @@ impl From<G1Projective> for G1Affine {
 }
 
 impl ConstantTimeEq for G1Affine {
+    #[inline]
     fn ct_eq(&self, other: &Self) -> Choice {
         // The only cases in which two points are equal are
         // 1. infinity is set on both
         // 2. infinity is not set on both, and their coordinates are equal
+        let is_ident = self.is_identity();
+        let other_ident = other.is_identity();
 
-        (self.infinity & other.infinity)
-            | ((!self.infinity)
-                & (!other.infinity)
-                & self.x.ct_eq(&other.x)
-                & self.y.ct_eq(&other.y))
+        (is_ident & other_ident)
+            | ((!is_ident) & (!other_ident) & self.x.ct_eq(&other.x) & self.y.ct_eq(&other.y))
     }
 }
 
@@ -87,7 +87,7 @@ impl ConditionallySelectable for G1Affine {
         G1Affine {
             x: Fp::conditional_select(&a.x, &b.x, choice),
             y: Fp::conditional_select(&a.y, &b.y, choice),
-            infinity: Choice::conditional_select(&a.infinity, &b.infinity, choice),
+            infinity: u8::conditional_select(&a.infinity, &b.infinity, choice),
         }
     }
 }
@@ -100,29 +100,25 @@ impl PartialEq for G1Affine {
     }
 }
 
-impl<'a> Neg for &'a G1Affine {
+impl<'a> ops::Neg for &'a G1Affine {
     type Output = G1Affine;
 
     #[inline]
     fn neg(self) -> G1Affine {
-        G1Affine {
-            x: self.x,
-            y: Fp::conditional_select(&-self.y, &Fp::one(), self.infinity),
-            infinity: self.infinity,
-        }
+        self.neg()
     }
 }
 
-impl Neg for G1Affine {
+impl ops::Neg for G1Affine {
     type Output = G1Affine;
 
     #[inline]
     fn neg(self) -> G1Affine {
-        -&self
+        (&self).neg()
     }
 }
 
-impl<'a, 'b> Add<&'b G1Projective> for &'a G1Affine {
+impl<'a, 'b> ops::Add<&'b G1Projective> for &'a G1Affine {
     type Output = G1Projective;
 
     #[inline]
@@ -131,7 +127,7 @@ impl<'a, 'b> Add<&'b G1Projective> for &'a G1Affine {
     }
 }
 
-impl<'a, 'b> Add<&'b G1Affine> for &'a G1Projective {
+impl<'a, 'b> ops::Add<&'b G1Affine> for &'a G1Projective {
     type Output = G1Projective;
 
     #[inline]
@@ -140,21 +136,21 @@ impl<'a, 'b> Add<&'b G1Affine> for &'a G1Projective {
     }
 }
 
-impl<'a, 'b> Sub<&'b G1Projective> for &'a G1Affine {
+impl<'a, 'b> ops::Sub<&'b G1Projective> for &'a G1Affine {
     type Output = G1Projective;
 
     #[inline]
     fn sub(self, rhs: &'b G1Projective) -> G1Projective {
-        self + (-rhs)
+        rhs.neg().add_mixed(self)
     }
 }
 
-impl<'a, 'b> Sub<&'b G1Affine> for &'a G1Projective {
+impl<'a, 'b> ops::Sub<&'b G1Affine> for &'a G1Projective {
     type Output = G1Projective;
 
     #[inline]
     fn sub(self, rhs: &'b G1Affine) -> G1Projective {
-        self + (-rhs)
+        self.add_mixed(&rhs.neg())
     }
 }
 
@@ -184,17 +180,17 @@ const B: Fp = Fp::from_raw_unchecked([
 
 impl G1Affine {
     /// Returns the identity of the group: the point at infinity.
-    pub fn identity() -> G1Affine {
+    pub const fn identity() -> G1Affine {
         G1Affine {
             x: Fp::zero(),
             y: Fp::one(),
-            infinity: Choice::from(1u8),
+            infinity: 1u8,
         }
     }
 
     /// Returns a fixed generator of the group. See [`notes::design`](notes/design/index.html#fixed-generators)
     /// for how this generator is chosen.
-    pub fn generator() -> G1Affine {
+    pub const fn generator() -> G1Affine {
         G1Affine {
             x: Fp::from_raw_unchecked([
                 0x5cb3_8790_fd53_0c16,
@@ -212,22 +208,24 @@ impl G1Affine {
                 0x0e1c_8c3f_ad00_59c0,
                 0x0bbc_3efc_5008_a26a,
             ]),
-            infinity: Choice::from(0u8),
+            infinity: 0u8,
         }
     }
 
     /// Serializes this element into compressed form. See [`notes::serialization`](crate::notes::serialization)
     /// for details about how group elements are serialized.
     pub fn to_compressed(&self) -> [u8; 48] {
+        let is_ident = self.is_identity();
+
         // Strictly speaking, self.x is zero already when self.infinity is true, but
         // to guard against implementation mistakes we do not assume this.
-        let mut res = Fp::conditional_select(&self.x, &Fp::zero(), self.infinity).to_bytes();
+        let mut res = Fp::conditional_select(&self.x, &Fp::zero(), is_ident).to_bytes();
 
         // This point is in compressed form, so we set the most significant bit.
         res[0] |= 1u8 << 7;
 
         // Is this point at infinity? If so, set the second-most significant bit.
-        res[0] |= u8::conditional_select(&0u8, &(1u8 << 6), self.infinity);
+        res[0] |= u8::conditional_select(&0u8, &(1u8 << 6), is_ident);
 
         // Is the y-coordinate the lexicographically largest of the two associated with the
         // x-coordinate? If so, set the third-most significant bit so long as this is not
@@ -235,7 +233,7 @@ impl G1Affine {
         res[0] |= u8::conditional_select(
             &0u8,
             &(1u8 << 5),
-            (!self.infinity) & self.y.lexicographically_largest(),
+            !is_ident & self.y.lexicographically_largest(),
         );
 
         res
@@ -244,17 +242,19 @@ impl G1Affine {
     /// Serializes this element into uncompressed form. See [`notes::serialization`](crate::notes::serialization)
     /// for details about how group elements are serialized.
     pub fn to_uncompressed(&self) -> [u8; 96] {
+        let is_ident = self.is_identity();
+
         let mut res = [0; 96];
 
         res[0..48].copy_from_slice(
-            &Fp::conditional_select(&self.x, &Fp::zero(), self.infinity).to_bytes()[..],
+            &Fp::conditional_select(&self.x, &Fp::zero(), is_ident).to_bytes()[..],
         );
         res[48..96].copy_from_slice(
-            &Fp::conditional_select(&self.y, &Fp::zero(), self.infinity).to_bytes()[..],
+            &Fp::conditional_select(&self.y, &Fp::zero(), is_ident).to_bytes()[..],
         );
 
         // Is this point at infinity? If so, set the second-most significant bit.
-        res[0] |= u8::conditional_select(&0u8, &(1u8 << 6), self.infinity);
+        res[0] |= u8::conditional_select(&0u8, &(1u8 << 6), is_ident);
 
         res
     }
@@ -302,7 +302,7 @@ impl G1Affine {
                     &G1Affine {
                         x,
                         y,
-                        infinity: infinity_flag_set,
+                        infinity: 0u8,
                     },
                     &G1Affine::identity(),
                     infinity_flag_set,
@@ -379,7 +379,7 @@ impl G1Affine {
                         G1Affine {
                             x,
                             y,
-                            infinity: infinity_flag_set,
+                            infinity: 0u8,
                         },
                         (!infinity_flag_set) & // Infinity flag should not be set
                         compression_flag_set, // Compression flag should be set
@@ -392,7 +392,7 @@ impl G1Affine {
     /// Returns true if this element is the identity (the point at infinity).
     #[inline]
     pub fn is_identity(&self) -> Choice {
-        self.infinity
+        Choice::from(self.infinity)
     }
 
     /// Returns true if this point is free of an $h$-torsion component, and so it
@@ -413,7 +413,18 @@ impl G1Affine {
     /// true unless an "unchecked" API was used.
     pub fn is_on_curve(&self) -> Choice {
         // y^2 - x^3 ?= 4
-        (self.y.square() - (self.x.square() * self.x)).ct_eq(&B) | self.infinity
+        (Fp::sum_of_products(&[self.y, -self.x.square()], &[self.y, self.x])).ct_eq(&B)
+            | self.is_identity()
+    }
+
+    /// Negate the element.
+    #[inline]
+    const fn neg(&self) -> Self {
+        G1Affine {
+            x: self.x,
+            y: self.y.neg(),
+            infinity: self.infinity,
+        }
     }
 }
 
@@ -465,7 +476,7 @@ impl<'a> From<&'a G1Affine> for G1Projective {
         G1Projective {
             x: p.x,
             y: p.y,
-            z: Fp::conditional_select(&Fp::one(), &Fp::zero(), p.infinity),
+            z: Fp::conditional_select(&Fp::one(), &Fp::zero(), p.is_identity()),
         }
     }
 }
@@ -480,17 +491,14 @@ impl ConstantTimeEq for G1Projective {
     fn ct_eq(&self, other: &Self) -> Choice {
         // Is (xz, yz, z) equal to (x'z', y'z', z') when converted to affine?
 
-        let x1 = self.x * other.z;
-        let x2 = other.x * self.z;
-
-        let y1 = self.y * other.z;
-        let y2 = other.y * self.z;
+        let cmp_x = Fp::sum_of_products(&[self.x, -other.x], &[other.z, self.z]);
+        let cmp_y = Fp::sum_of_products(&[self.y, -other.y], &[other.z, self.z]);
 
         let self_is_zero = self.z.is_zero();
         let other_is_zero = other.z.is_zero();
 
         (self_is_zero & other_is_zero) // Both point at infinity
-            | ((!self_is_zero) & (!other_is_zero) & x1.ct_eq(&x2) & y1.ct_eq(&y2))
+            | ((!self_is_zero) & (!other_is_zero) & cmp_x.is_zero() & cmp_y.is_zero())
         // Neither point at infinity, coordinates are the same
     }
 }
@@ -513,29 +521,25 @@ impl PartialEq for G1Projective {
     }
 }
 
-impl<'a> Neg for &'a G1Projective {
+impl<'a> ops::Neg for &'a G1Projective {
     type Output = G1Projective;
 
     #[inline]
     fn neg(self) -> G1Projective {
-        G1Projective {
-            x: self.x,
-            y: -self.y,
-            z: self.z,
-        }
+        self.neg()
     }
 }
 
-impl Neg for G1Projective {
+impl ops::Neg for G1Projective {
     type Output = G1Projective;
 
     #[inline]
     fn neg(self) -> G1Projective {
-        -&self
+        (&self).neg()
     }
 }
 
-impl<'a, 'b> Add<&'b G1Projective> for &'a G1Projective {
+impl<'a, 'b> ops::Add<&'b G1Projective> for &'a G1Projective {
     type Output = G1Projective;
 
     #[inline]
@@ -544,7 +548,7 @@ impl<'a, 'b> Add<&'b G1Projective> for &'a G1Projective {
     }
 }
 
-impl<'a, 'b> Sub<&'b G1Projective> for &'a G1Projective {
+impl<'a, 'b> ops::Sub<&'b G1Projective> for &'a G1Projective {
     type Output = G1Projective;
 
     #[inline]
@@ -553,19 +557,19 @@ impl<'a, 'b> Sub<&'b G1Projective> for &'a G1Projective {
     }
 }
 
-impl<'a, 'b> Mul<&'b Scalar> for &'a G1Projective {
+impl<'a, 'b> ops::Mul<&'b Scalar> for &'a G1Projective {
     type Output = G1Projective;
 
     fn mul(self, other: &'b Scalar) -> Self::Output {
-        self.multiply(&other.to_bytes())
+        self.multiply(*other)
     }
 }
 
-impl<'a, 'b> Mul<&'b Scalar> for &'a G1Affine {
+impl<'a, 'b> ops::Mul<&'b Scalar> for &'a G1Affine {
     type Output = G1Projective;
 
     fn mul(self, other: &'b Scalar) -> Self::Output {
-        G1Projective::from(self).multiply(&other.to_bytes())
+        G1Projective::from(self).multiply(*other)
     }
 }
 
@@ -575,14 +579,13 @@ impl_binops_multiplicative_mixed!(G1Affine, Scalar, G1Projective);
 
 #[inline(always)]
 fn mul_by_3b(a: Fp) -> Fp {
-    let a = a + a; // 2
-    let a = a + a; // 4
-    a + a + a // 12
+    let a = a.double().double(); // 4
+    a.double() + a // 12
 }
 
 impl G1Projective {
     /// Returns the identity of the group: the point at infinity.
-    pub fn identity() -> G1Projective {
+    pub const fn identity() -> G1Projective {
         G1Projective {
             x: Fp::zero(),
             y: Fp::one(),
@@ -592,7 +595,7 @@ impl G1Projective {
 
     /// Returns a fixed generator of the group. See [`notes::design`](notes/design/index.html#fixed-generators)
     /// for how this generator is chosen.
-    pub fn generator() -> G1Projective {
+    pub const fn generator() -> G1Projective {
         G1Projective {
             x: Fp::from_raw_unchecked([
                 0x5cb3_8790_fd53_0c16,
@@ -619,23 +622,21 @@ impl G1Projective {
         // Algorithm 9, https://eprint.iacr.org/2015/1060.pdf
 
         let t0 = self.y.square();
-        let z3 = t0 + t0;
-        let z3 = z3 + z3;
-        let z3 = z3 + z3;
+        let z3 = t0.double().double().double();
         let t1 = self.y * self.z;
         let t2 = self.z.square();
         let t2 = mul_by_3b(t2);
         let x3 = t2 * z3;
         let y3 = t0 + t2;
         let z3 = t1 * z3;
-        let t1 = t2 + t2;
+        let t1 = t2.double();
         let t2 = t1 + t2;
         let t0 = t0 - t2;
         let y3 = t0 * y3;
         let y3 = x3 + y3;
         let t1 = self.x * self.y;
         let x3 = t0 * t1;
-        let x3 = x3 + x3;
+        let x3 = x3.double();
 
         let tmp = G1Projective {
             x: x3,
@@ -668,21 +669,15 @@ impl G1Projective {
         let x3 = x3 * y3;
         let y3 = t0 + t2;
         let y3 = x3 - y3;
-        let x3 = t0 + t0;
+        let x3 = t0.double();
         let t0 = x3 + t0;
         let t2 = mul_by_3b(t2);
         let z3 = t1 + t2;
         let t1 = t1 - t2;
         let y3 = mul_by_3b(y3);
-        let x3 = t4 * y3;
-        let t2 = t3 * t1;
-        let x3 = t2 - x3;
-        let y3 = y3 * t0;
-        let t1 = t1 * z3;
-        let y3 = t1 + y3;
-        let t0 = t0 * t3;
-        let z3 = z3 * t4;
-        let z3 = z3 + t0;
+        let x3 = Fp::sum_of_products(&[t3, -t4], &[t1, y3]);
+        let y3 = Fp::sum_of_products(&[t1, y3], &[z3, t0]);
+        let z3 = Fp::sum_of_products(&[z3, t0], &[t4, t3]);
 
         G1Projective {
             x: x3,
@@ -706,21 +701,15 @@ impl G1Projective {
         let t4 = t4 + self.y;
         let y3 = rhs.x * self.z;
         let y3 = y3 + self.x;
-        let x3 = t0 + t0;
+        let x3 = t0.double();
         let t0 = x3 + t0;
         let t2 = mul_by_3b(self.z);
         let z3 = t1 + t2;
         let t1 = t1 - t2;
         let y3 = mul_by_3b(y3);
-        let x3 = t4 * y3;
-        let t2 = t3 * t1;
-        let x3 = t2 - x3;
-        let y3 = y3 * t0;
-        let t1 = t1 * z3;
-        let y3 = t1 + y3;
-        let t0 = t0 * t3;
-        let z3 = z3 * t4;
-        let z3 = z3 + t0;
+        let x3 = Fp::sum_of_products(&[t3, -t4], &[t1, y3]);
+        let y3 = Fp::sum_of_products(&[t1, y3], &[z3, t0]);
+        let z3 = Fp::sum_of_products(&[z3, t0], &[t4, t3]);
 
         let tmp = G1Projective {
             x: x3,
@@ -731,7 +720,17 @@ impl G1Projective {
         G1Projective::conditional_select(&tmp, self, rhs.is_identity())
     }
 
-    fn multiply(&self, by: &[u8; 32]) -> G1Projective {
+    /// Negate the element.
+    #[inline]
+    const fn neg(&self) -> Self {
+        G1Projective {
+            x: self.x,
+            y: self.y.neg(),
+            z: self.z,
+        }
+    }
+
+    fn multiply(&self, by: Scalar) -> G1Projective {
         let mut acc = G1Projective::identity();
 
         // This is a simple double-and-add implementation of point
@@ -740,14 +739,14 @@ impl G1Projective {
         //
         // We skip the leading bit because it's always unset for Fq
         // elements.
-        for bit in by
-            .iter()
-            .rev()
-            .flat_map(|byte| (0..8).rev().map(move |i| Choice::from((byte >> i) & 1u8)))
-            .skip(1)
-        {
+        let by = by.to_canonical();
+        for idx in (0..Scalar::BIT_SIZE).rev() {
             acc = acc.double();
-            acc = G1Projective::conditional_select(&acc, &(acc + self), bit);
+            acc = G1Projective::conditional_select(
+                &acc,
+                &(acc + self),
+                Choice::from(by.bit_vartime(idx) as u8),
+            );
         }
 
         acc
@@ -762,7 +761,7 @@ impl G1Projective {
         while x != 0 {
             tmp = tmp.double();
 
-            if x % 2 == 1 {
+            if x & 1 == 1 {
                 xself += tmp;
             }
             x >>= 1;
@@ -812,7 +811,7 @@ impl G1Projective {
             // Set the coordinates to the correct value
             q.x = p.x * tmp;
             q.y = p.y * tmp;
-            q.infinity = Choice::from(0u8);
+            q.infinity = 0u8;
 
             *q = G1Affine::conditional_select(q, &G1Affine::identity(), skip);
         }
@@ -828,9 +827,10 @@ impl G1Projective {
     /// true unless an "unchecked" API was used.
     pub fn is_on_curve(&self) -> Choice {
         // Y^2 Z = X^3 + b Z^3
-
-        (self.y.square() * self.z).ct_eq(&(self.x.square() * self.x + self.z.square() * self.z * B))
-            | self.z.is_zero()
+        (self.y.square() * self.z).ct_eq(&Fp::sum_of_products(
+            &[self.x.square(), self.z.square() * self.z],
+            &[self.x, B],
+        )) | self.z.is_zero()
     }
 }
 
@@ -1270,7 +1270,7 @@ fn test_doubling() {
                     0x25cf_c2b5_22d1_1720,
                     0x0636_1c83_f8d0_9b15,
                 ]),
-                infinity: Choice::from(0u8)
+                infinity: 0u8
             }
         );
     }
@@ -1593,7 +1593,7 @@ fn test_is_torsion_free() {
             0xf6a6_3f6f_07f6_0961,
             0x0c53_b5b9_7e63_4df3,
         ]),
-        infinity: Choice::from(0u8),
+        infinity: 0u8,
     };
     assert!(!bool::from(a.is_torsion_free()));
 

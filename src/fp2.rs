@@ -1,7 +1,8 @@
 //! This module implements arithmetic over the quadratic extension field Fp2.
 
 use core::fmt;
-use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use core::ops;
+
 use rand_core::RngCore;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
@@ -38,6 +39,7 @@ impl From<Fp> for Fp2 {
 }
 
 impl ConstantTimeEq for Fp2 {
+    #[inline]
     fn ct_eq(&self, other: &Self) -> Choice {
         self.c0.ct_eq(&other.c0) & self.c1.ct_eq(&other.c1)
     }
@@ -60,7 +62,7 @@ impl ConditionallySelectable for Fp2 {
     }
 }
 
-impl<'a> Neg for &'a Fp2 {
+impl<'a> ops::Neg for &'a Fp2 {
     type Output = Fp2;
 
     #[inline]
@@ -69,16 +71,16 @@ impl<'a> Neg for &'a Fp2 {
     }
 }
 
-impl Neg for Fp2 {
+impl ops::Neg for Fp2 {
     type Output = Fp2;
 
     #[inline]
     fn neg(self) -> Fp2 {
-        -&self
+        (&self).neg()
     }
 }
 
-impl<'a, 'b> Sub<&'b Fp2> for &'a Fp2 {
+impl<'a, 'b> ops::Sub<&'b Fp2> for &'a Fp2 {
     type Output = Fp2;
 
     #[inline]
@@ -87,7 +89,7 @@ impl<'a, 'b> Sub<&'b Fp2> for &'a Fp2 {
     }
 }
 
-impl<'a, 'b> Add<&'b Fp2> for &'a Fp2 {
+impl<'a, 'b> ops::Add<&'b Fp2> for &'a Fp2 {
     type Output = Fp2;
 
     #[inline]
@@ -96,7 +98,7 @@ impl<'a, 'b> Add<&'b Fp2> for &'a Fp2 {
     }
 }
 
-impl<'a, 'b> Mul<&'b Fp2> for &'a Fp2 {
+impl<'a, 'b> ops::Mul<&'b Fp2> for &'a Fp2 {
     type Output = Fp2;
 
     #[inline]
@@ -125,6 +127,7 @@ impl Fp2 {
         }
     }
 
+    #[inline]
     pub fn is_zero(&self) -> Choice {
         self.c0.is_zero() & self.c1.is_zero()
     }
@@ -136,32 +139,36 @@ impl Fp2 {
         }
     }
 
-    /// Raises this element to p.
+    /// Raises this element to p^n.
     #[inline(always)]
-    pub fn frobenius_map(&self) -> Self {
-        // This is always just a conjugation. If you're curious why, here's
-        // an article about it: https://alicebob.cryptoland.net/the-frobenius-endomorphism-with-finite-fields/
-        self.conjugate()
-    }
-
-    #[inline(always)]
-    pub fn conjugate(&self) -> Self {
-        Fp2 {
-            c0: self.c0,
-            c1: -self.c1,
+    pub const fn frobenius_map(&self, n: usize) -> Self {
+        if n & 1 == 1 {
+            // This is always just a conjugation. If you're curious why, here's
+            // an article about it: https://alicebob.cryptoland.net/the-frobenius-endomorphism-with-finite-fields/
+            self.conjugate()
+        } else {
+            *self
         }
     }
 
     #[inline(always)]
-    pub fn mul_by_nonresidue(&self) -> Fp2 {
+    pub const fn conjugate(&self) -> Self {
+        Fp2 {
+            c0: self.c0,
+            c1: self.c1.neg(),
+        }
+    }
+
+    #[inline(always)]
+    pub const fn mul_by_nonresidue(&self) -> Fp2 {
         // Multiply a + bu by u + 1, getting
         // au + a + bu^2 + bu
         // and because u^2 = -1, we get
         // (a - b) + (a + b)u
 
         Fp2 {
-            c0: self.c0 - self.c1,
-            c1: self.c0 + self.c1,
+            c0: self.c0.sub(&self.c1),
+            c1: self.c0.add(&self.c1),
         }
     }
 
@@ -192,13 +199,13 @@ impl Fp2 {
         // c0' = (c0 + c1) * (c0 - c1)
         // c1' = 2 * c0 * c1
 
-        let a = (&self.c0).add(&self.c1);
-        let b = (&self.c0).sub(&self.c1);
-        let c = (&self.c0).add(&self.c0);
+        let a = self.c0.add(&self.c1);
+        let b = self.c0.sub(&self.c1);
+        let c = self.c0.double();
 
         Fp2 {
-            c0: (&a).mul(&b),
-            c1: (&c).mul(&self.c1),
+            c0: a.mul(&b),
+            c1: c.mul(&self.c1),
         }
     }
 
@@ -216,29 +223,36 @@ impl Fp2 {
         // Each of these is a "sum of products", which we can compute efficiently.
 
         Fp2 {
-            c0: Fp::sum_of_products([self.c0, -self.c1], [rhs.c0, rhs.c1]),
-            c1: Fp::sum_of_products([self.c0, self.c1], [rhs.c1, rhs.c0]),
+            c0: Fp::sum_of_products(&[self.c0, -self.c1], &[rhs.c0, rhs.c1]),
+            c1: Fp::sum_of_products(&[self.c0, self.c1], &[rhs.c1, rhs.c0]),
         }
     }
 
     pub const fn add(&self, rhs: &Fp2) -> Fp2 {
         Fp2 {
-            c0: (&self.c0).add(&rhs.c0),
-            c1: (&self.c1).add(&rhs.c1),
+            c0: self.c0.add(&rhs.c0),
+            c1: self.c1.add(&rhs.c1),
+        }
+    }
+
+    pub const fn double(&self) -> Fp2 {
+        Fp2 {
+            c0: self.c0.double(),
+            c1: self.c1.double(),
         }
     }
 
     pub const fn sub(&self, rhs: &Fp2) -> Fp2 {
         Fp2 {
-            c0: (&self.c0).sub(&rhs.c0),
-            c1: (&self.c1).sub(&rhs.c1),
+            c0: self.c0.sub(&rhs.c0),
+            c1: self.c1.sub(&rhs.c1),
         }
     }
 
     pub const fn neg(&self) -> Fp2 {
         Fp2 {
-            c0: (&self.c0).neg(),
-            c1: (&self.c1).neg(),
+            c0: self.c0.neg(),
+            c1: self.c1.neg(),
         }
     }
 
@@ -272,7 +286,7 @@ impl Fp2 {
                     c0: -x0.c1,
                     c1: x0.c0,
                 },
-                alpha.ct_eq(&(&Fp2::one()).neg()),
+                alpha.ct_eq(&Fp2::one().neg()),
             )
             // Otherwise, the correct solution is (1 + alpha)^((q - 1) // 2) * x0
             .or_else(|| {
@@ -312,10 +326,12 @@ impl Fp2 {
         // of (a + bu). Importantly, this can be computing using
         // only a single inversion in Fp.
 
-        (self.c0.square() + self.c1.square()).invert().map(|t| Fp2 {
-            c0: self.c0 * t,
-            c1: self.c1 * -t,
-        })
+        Fp::sum_of_products(&[self.c0, self.c1], &[self.c0, self.c1])
+            .invert()
+            .map(|t| Fp2 {
+                c0: self.c0 * t,
+                c1: self.c1 * -t,
+            })
     }
 
     /// Although this is labeled "vartime", it is only

@@ -3,7 +3,7 @@
 use core::borrow::Borrow;
 use core::fmt;
 use core::iter::Sum;
-use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use core::ops;
 use group::{
     prime::{PrimeCurve, PrimeCurveAffine, PrimeGroup},
     Curve, Group, GroupEncoding, UncompressedEncoding,
@@ -29,7 +29,7 @@ use crate::Scalar;
 pub struct G2Affine {
     pub(crate) x: Fp2,
     pub(crate) y: Fp2,
-    infinity: Choice,
+    infinity: u8,
 }
 
 impl Default for G2Affine {
@@ -56,7 +56,7 @@ impl<'a> From<&'a G2Projective> for G2Affine {
         let tmp = G2Affine {
             x,
             y,
-            infinity: Choice::from(0u8),
+            infinity: 0u8,
         };
 
         G2Affine::conditional_select(&tmp, &G2Affine::identity(), zinv.is_zero())
@@ -70,16 +70,16 @@ impl From<G2Projective> for G2Affine {
 }
 
 impl ConstantTimeEq for G2Affine {
+    #[inline]
     fn ct_eq(&self, other: &Self) -> Choice {
         // The only cases in which two points are equal are
         // 1. infinity is set on both
         // 2. infinity is not set on both, and their coordinates are equal
+        let is_ident = self.is_identity();
+        let other_ident = other.is_identity();
 
-        (self.infinity & other.infinity)
-            | ((!self.infinity)
-                & (!other.infinity)
-                & self.x.ct_eq(&other.x)
-                & self.y.ct_eq(&other.y))
+        (is_ident & other_ident)
+            | ((!is_ident) & (!other_ident) & self.x.ct_eq(&other.x) & self.y.ct_eq(&other.y))
     }
 }
 
@@ -88,7 +88,7 @@ impl ConditionallySelectable for G2Affine {
         G2Affine {
             x: Fp2::conditional_select(&a.x, &b.x, choice),
             y: Fp2::conditional_select(&a.y, &b.y, choice),
-            infinity: Choice::conditional_select(&a.infinity, &b.infinity, choice),
+            infinity: u8::conditional_select(&a.infinity, &b.infinity, choice),
         }
     }
 }
@@ -101,29 +101,25 @@ impl PartialEq for G2Affine {
     }
 }
 
-impl<'a> Neg for &'a G2Affine {
+impl<'a> ops::Neg for &'a G2Affine {
     type Output = G2Affine;
 
     #[inline]
     fn neg(self) -> G2Affine {
-        G2Affine {
-            x: self.x,
-            y: Fp2::conditional_select(&-self.y, &Fp2::one(), self.infinity),
-            infinity: self.infinity,
-        }
+        self.neg()
     }
 }
 
-impl Neg for G2Affine {
+impl ops::Neg for G2Affine {
     type Output = G2Affine;
 
     #[inline]
     fn neg(self) -> G2Affine {
-        -&self
+        (&self).neg()
     }
 }
 
-impl<'a, 'b> Add<&'b G2Projective> for &'a G2Affine {
+impl<'a, 'b> ops::Add<&'b G2Projective> for &'a G2Affine {
     type Output = G2Projective;
 
     #[inline]
@@ -132,7 +128,7 @@ impl<'a, 'b> Add<&'b G2Projective> for &'a G2Affine {
     }
 }
 
-impl<'a, 'b> Add<&'b G2Affine> for &'a G2Projective {
+impl<'a, 'b> ops::Add<&'b G2Affine> for &'a G2Projective {
     type Output = G2Projective;
 
     #[inline]
@@ -141,7 +137,7 @@ impl<'a, 'b> Add<&'b G2Affine> for &'a G2Projective {
     }
 }
 
-impl<'a, 'b> Sub<&'b G2Projective> for &'a G2Affine {
+impl<'a, 'b> ops::Sub<&'b G2Projective> for &'a G2Affine {
     type Output = G2Projective;
 
     #[inline]
@@ -150,7 +146,7 @@ impl<'a, 'b> Sub<&'b G2Projective> for &'a G2Affine {
     }
 }
 
-impl<'a, 'b> Sub<&'b G2Affine> for &'a G2Projective {
+impl<'a, 'b> ops::Sub<&'b G2Affine> for &'a G2Projective {
     type Output = G2Projective;
 
     #[inline]
@@ -197,17 +193,17 @@ const B3: Fp2 = Fp2::add(&Fp2::add(&B, &B), &B);
 
 impl G2Affine {
     /// Returns the identity of the group: the point at infinity.
-    pub fn identity() -> G2Affine {
+    pub const fn identity() -> G2Affine {
         G2Affine {
             x: Fp2::zero(),
             y: Fp2::one(),
-            infinity: Choice::from(1u8),
+            infinity: 1u8,
         }
     }
 
     /// Returns a fixed generator of the group. See [`notes::design`](notes/design/index.html#fixed-generators)
     /// for how this generator is chosen.
-    pub fn generator() -> G2Affine {
+    pub const fn generator() -> G2Affine {
         G2Affine {
             x: Fp2 {
                 c0: Fp::from_raw_unchecked([
@@ -245,16 +241,18 @@ impl G2Affine {
                     0x0b2b_c2a1_63de_1bf2,
                 ]),
             },
-            infinity: Choice::from(0u8),
+            infinity: 0u8,
         }
     }
 
     /// Serializes this element into compressed form. See [`notes::serialization`](crate::notes::serialization)
     /// for details about how group elements are serialized.
     pub fn to_compressed(&self) -> [u8; 96] {
+        let is_ident = self.is_identity();
+
         // Strictly speaking, self.x is zero already when self.infinity is true, but
         // to guard against implementation mistakes we do not assume this.
-        let x = Fp2::conditional_select(&self.x, &Fp2::zero(), self.infinity);
+        let x = Fp2::conditional_select(&self.x, &Fp2::zero(), is_ident);
 
         let mut res = [0; 96];
 
@@ -265,7 +263,7 @@ impl G2Affine {
         res[0] |= 1u8 << 7;
 
         // Is this point at infinity? If so, set the second-most significant bit.
-        res[0] |= u8::conditional_select(&0u8, &(1u8 << 6), self.infinity);
+        res[0] |= u8::conditional_select(&0u8, &(1u8 << 6), is_ident);
 
         // Is the y-coordinate the lexicographically largest of the two associated with the
         // x-coordinate? If so, set the third-most significant bit so long as this is not
@@ -273,7 +271,7 @@ impl G2Affine {
         res[0] |= u8::conditional_select(
             &0u8,
             &(1u8 << 5),
-            (!self.infinity) & self.y.lexicographically_largest(),
+            (!is_ident) & self.y.lexicographically_largest(),
         );
 
         res
@@ -283,9 +281,10 @@ impl G2Affine {
     /// for details about how group elements are serialized.
     pub fn to_uncompressed(&self) -> [u8; 192] {
         let mut res = [0; 192];
+        let is_ident = self.is_identity();
 
-        let x = Fp2::conditional_select(&self.x, &Fp2::zero(), self.infinity);
-        let y = Fp2::conditional_select(&self.y, &Fp2::zero(), self.infinity);
+        let x = Fp2::conditional_select(&self.x, &Fp2::zero(), is_ident);
+        let y = Fp2::conditional_select(&self.y, &Fp2::zero(), is_ident);
 
         res[0..48].copy_from_slice(&x.c1.to_bytes()[..]);
         res[48..96].copy_from_slice(&x.c0.to_bytes()[..]);
@@ -293,7 +292,7 @@ impl G2Affine {
         res[144..192].copy_from_slice(&y.c0.to_bytes()[..]);
 
         // Is this point at infinity? If so, set the second-most significant bit.
-        res[0] |= u8::conditional_select(&0u8, &(1u8 << 6), self.infinity);
+        res[0] |= u8::conditional_select(&0u8, &(1u8 << 6), is_ident);
 
         res
     }
@@ -364,7 +363,7 @@ impl G2Affine {
                             &G2Affine {
                                 x,
                                 y,
-                                infinity: infinity_flag_set,
+                                infinity: 0u8,
                             },
                             &G2Affine::identity(),
                             infinity_flag_set,
@@ -452,7 +451,7 @@ impl G2Affine {
                             G2Affine {
                                 x,
                                 y,
-                                infinity: infinity_flag_set,
+                                infinity: 0u8,
                             },
                             (!infinity_flag_set) & // Infinity flag should not be set
                             compression_flag_set, // Compression flag should be set
@@ -466,7 +465,7 @@ impl G2Affine {
     /// Returns true if this element is the identity (the point at infinity).
     #[inline]
     pub fn is_identity(&self) -> Choice {
-        self.infinity
+        Choice::from(self.infinity)
     }
 
     /// Returns true if this point is free of an $h$-torsion component, and so it
@@ -485,7 +484,16 @@ impl G2Affine {
     /// true unless an "unchecked" API was used.
     pub fn is_on_curve(&self) -> Choice {
         // y^2 - x^3 ?= 4(u + 1)
-        (self.y.square() - (self.x.square() * self.x)).ct_eq(&B) | self.infinity
+        (self.y.square() - (self.x.square() * self.x)).ct_eq(&B) | self.is_identity()
+    }
+
+    /// Negate the element.
+    const fn neg(&self) -> Self {
+        G2Affine {
+            x: self.x,
+            y: self.y.neg(),
+            infinity: self.infinity,
+        }
     }
 }
 
@@ -518,7 +526,7 @@ impl<'a> From<&'a G2Affine> for G2Projective {
         G2Projective {
             x: p.x,
             y: p.y,
-            z: Fp2::conditional_select(&Fp2::one(), &Fp2::zero(), p.infinity),
+            z: Fp2::conditional_select(&Fp2::one(), &Fp2::zero(), p.is_identity()),
         }
     }
 }
@@ -566,29 +574,25 @@ impl PartialEq for G2Projective {
     }
 }
 
-impl<'a> Neg for &'a G2Projective {
+impl<'a> ops::Neg for &'a G2Projective {
     type Output = G2Projective;
 
     #[inline]
     fn neg(self) -> G2Projective {
-        G2Projective {
-            x: self.x,
-            y: -self.y,
-            z: self.z,
-        }
+        self.neg()
     }
 }
 
-impl Neg for G2Projective {
+impl ops::Neg for G2Projective {
     type Output = G2Projective;
 
     #[inline]
     fn neg(self) -> G2Projective {
-        -&self
+        (&self).neg()
     }
 }
 
-impl<'a, 'b> Add<&'b G2Projective> for &'a G2Projective {
+impl<'a, 'b> ops::Add<&'b G2Projective> for &'a G2Projective {
     type Output = G2Projective;
 
     #[inline]
@@ -597,7 +601,7 @@ impl<'a, 'b> Add<&'b G2Projective> for &'a G2Projective {
     }
 }
 
-impl<'a, 'b> Sub<&'b G2Projective> for &'a G2Projective {
+impl<'a, 'b> ops::Sub<&'b G2Projective> for &'a G2Projective {
     type Output = G2Projective;
 
     #[inline]
@@ -606,7 +610,7 @@ impl<'a, 'b> Sub<&'b G2Projective> for &'a G2Projective {
     }
 }
 
-impl<'a, 'b> Mul<&'b Scalar> for &'a G2Projective {
+impl<'a, 'b> ops::Mul<&'b Scalar> for &'a G2Projective {
     type Output = G2Projective;
 
     fn mul(self, other: &'b Scalar) -> Self::Output {
@@ -614,7 +618,7 @@ impl<'a, 'b> Mul<&'b Scalar> for &'a G2Projective {
     }
 }
 
-impl<'a, 'b> Mul<&'b Scalar> for &'a G2Affine {
+impl<'a, 'b> ops::Mul<&'b Scalar> for &'a G2Affine {
     type Output = G2Projective;
 
     fn mul(self, other: &'b Scalar) -> Self::Output {
@@ -859,11 +863,11 @@ impl G2Projective {
 
         G2Projective {
             // x = frobenius(x)/((u+1)^((p-1)/3))
-            x: self.x.frobenius_map() * psi_coeff_x,
+            x: self.x.frobenius_map(1) * psi_coeff_x,
             // y = frobenius(y)/(u+1)^((p-1)/2)
-            y: self.y.frobenius_map() * psi_coeff_y,
+            y: self.y.frobenius_map(1) * psi_coeff_y,
             // z = frobenius(z)
-            z: self.z.frobenius_map(),
+            z: self.z.frobenius_map(1),
         }
     }
 
@@ -899,7 +903,7 @@ impl G2Projective {
         let mut acc = *self;
         while x != 0 {
             acc = acc.double();
-            if x % 2 == 1 {
+            if x & 1 == 1 {
                 xself += acc;
             }
             x >>= 1;
@@ -957,7 +961,7 @@ impl G2Projective {
             // Set the coordinates to the correct value
             q.x = p.x * tmp;
             q.y = p.y * tmp;
-            q.infinity = Choice::from(0u8);
+            q.infinity = 0u8;
 
             *q = G2Affine::conditional_select(q, &G2Affine::identity(), skip);
         }
@@ -976,6 +980,15 @@ impl G2Projective {
 
         (self.y.square() * self.z).ct_eq(&(self.x.square() * self.x + self.z.square() * self.z * B))
             | self.z.is_zero()
+    }
+
+    /// Negate the element.
+    const fn neg(&self) -> Self {
+        G2Projective {
+            x: self.x,
+            y: self.y.neg(),
+            z: self.z,
+        }
     }
 }
 
@@ -1448,7 +1461,7 @@ fn test_doubling() {
                         0x00ac_f7d3_25cb_89cf,
                     ]),
                 },
-                infinity: Choice::from(0u8)
+                infinity: 0u8
             }
         );
     }
@@ -1877,7 +1890,7 @@ fn test_is_torsion_free() {
                 0x1569_44c4_dfe9_2bbb,
             ]),
         },
-        infinity: Choice::from(0u8),
+        infinity: 0u8,
     };
     assert!(!bool::from(a.is_torsion_free()));
 
