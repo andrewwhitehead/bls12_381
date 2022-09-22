@@ -4,7 +4,8 @@
 use core::fmt::{self, Debug, Formatter};
 
 use digest::{
-    generic_array::typenum::IsLess, BlockInput, ExtendableOutput, FixedOutput, Update, XofReader,
+    crypto_common::BlockSizeUser, generic_array::typenum::IsLess, ExtendableOutput, FixedOutput,
+    OutputSizeUser, Update, XofReader,
 };
 
 use crate::generic_array::{
@@ -229,21 +230,21 @@ impl<H: FixedOutput> Debug for ExpandMsgXmd<H> {
 
 impl<H> ExpandMessage for ExpandMsgXmd<H>
 where
-    H: Default + BlockInput + FixedOutput + Update,
+    H: BlockSizeUser + Default + FixedOutput + Update,
 {
     fn init_expand<M, L>(message: M, dst: &[u8], len_in_bytes: usize) -> Self
     where
         M: Message,
         L: ArrayLength<u8> + IsLess<U256>,
     {
-        let hash_size = <H as FixedOutput>::OutputSize::to_usize();
+        let hash_size = <H as OutputSizeUser>::OutputSize::to_usize();
         let ell = (len_in_bytes + hash_size - 1) / hash_size;
         if ell > 255 {
             panic!("Invalid ExpandMsgXmd usage: ell > 255");
         }
         let dst = ExpandMsgDst::for_xmd::<H>(dst);
         let mut hash_b_0 =
-            H::default().chain(GenericArray::<u8, <H as BlockInput>::BlockSize>::default());
+            H::default().chain(GenericArray::<u8, <H as BlockSizeUser>::BlockSize>::default());
         message.input_message(|m| hash_b_0.update(m));
         let b_0 = hash_b_0
             .chain((len_in_bytes as u16).to_be_bytes())

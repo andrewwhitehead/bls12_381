@@ -16,11 +16,11 @@ edition = "2021"
 rustdoc-args = [ "--html-in-header", "katex-header.html" ]
 
 [dev-dependencies]
-criterion = "0.3"
+criterion = "0.4"
 hex-literal = "0.3"
 rand_xorshift = "0.3"
-sha2 = "0.9"
-sha3 = "0.9"
+sha2 = "0.10"
+sha3 = "0.10"
 
 [[bench]]
 name = "groups"
@@ -39,11 +39,9 @@ harness = false
 [dependencies.crypto-bigint]
 version = "0.4"
 default-features = false
-git = "https://github.com/RustCrypto/crypto-bigint"
-rev = "2d0f41584890b8d097299da88887bbbdfb4ff2ad"
 
 [dependencies.digest]
-version = "0.9"
+version = "0.10"
 optional = true
 
 [dependencies.ff]
@@ -73,7 +71,7 @@ default-features = false
 optional = true
 
 [features]
-default = ["groups", "pairings", "alloc", "bits"]
+default = ["groups", "pairings", "alloc", "bits", "experimental"]
 bits = ["ff/bits"]
 groups = ["group"]
 pairings = ["groups", "pairing"]
