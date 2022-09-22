@@ -754,23 +754,20 @@ impl G1Projective {
 
     /// Multiply `self` by `crate::BLS_X`, using double and add.
     fn mul_by_x(&self) -> G1Projective {
-        let mut xself = G1Projective::identity();
-        // NOTE: in BLS12-381 we can just skip the first bit.
-        let mut x = crate::BLS_X >> 1;
-        let mut tmp = *self;
-        while x != 0 {
-            tmp = tmp.double();
-
-            if x & 1 == 1 {
-                xself += tmp;
+        let mut i = 1u64 << 62;
+        let mut acc = *self;
+        while i != 0 {
+            acc = acc.double();
+            if crate::BLS_X & i != 0 {
+                acc += self;
             }
-            x >>= 1;
+            i >>= 1;
         }
-        // finally, flip the sign
         if crate::BLS_X_IS_NEGATIVE {
-            xself = -xself;
+            -acc
+        } else {
+            acc
         }
-        xself
     }
 
     /// Multiplies by $(1 - z)$, where $z$ is the parameter of BLS12-381, which

@@ -46,58 +46,54 @@ impl MillerLoopResult {
     /// operation in the so-called `cyclotomic subgroup` of `Fq6` so that
     /// it can be compared with other elements of `Gt`.
     pub fn final_exponentiation(&self) -> Gt {
-        // Adaptation of Algorithm 9, https://eprint.iacr.org/2010/354.pdf
+        // Adaptation of Fp12 squaring algorithm
         #[must_use]
+        #[inline]
         fn fp4_square(a: Fp2, b: Fp2) -> (Fp2, Fp2) {
-            let t0 = a.square();
-            let t1 = b.square();
-            let mut t2 = t1.mul_by_nonresidue();
-            let c0 = t2 + t0;
-            t2 = a + b;
-            t2 = t2.square();
-            t2 -= t0;
-            let c1 = t2 - t1;
+            let ab = a * b;
+            let c0 = b.mul_by_nonresidue();
+            let c0 = c0 + a;
+            let c0 = c0 * (a + b);
+            let c0 = c0 - (ab + ab.mul_by_nonresidue());
+            let c1 = ab.double();
 
             (c0, c1)
         }
+
         // Adaptation of Algorithm 5.5.4, Guide to Pairing-Based Cryptography
         // Faster Squaring in the Cyclotomic Subgroup of Sixth Degree Extensions
         // https://eprint.iacr.org/2009/565.pdf
         #[must_use]
+        #[inline]
         fn cyclotomic_square(f: Fp12) -> Fp12 {
-            let mut z0 = f.c0.c0;
-            let mut z4 = f.c0.c1;
-            let mut z3 = f.c0.c2;
-            let mut z2 = f.c1.c0;
-            let mut z1 = f.c1.c1;
-            let mut z5 = f.c1.c2;
+            let Fp6 {
+                c0: mut z0,
+                c1: mut z4,
+                c2: mut z3,
+            } = f.c0;
+            let Fp6 {
+                c0: mut z2,
+                c1: mut z1,
+                c2: mut z5,
+            } = f.c1;
 
             let (t0, t1) = fp4_square(z0, z1);
 
             // For A
-            z0 = t0 - z0;
-            z0 = z0.double() + t0;
-
-            z1 = t1 + z1;
-            z1 = z1.double() + t1;
+            z0 = (t0 - z0).double() + t0;
+            z1 = (t1 + z1).double() + t1;
 
             let (mut t0, t1) = fp4_square(z2, z3);
             let (t2, t3) = fp4_square(z4, z5);
 
             // For C
-            z4 = t0 - z4;
-            z4 = z4.double() + t0;
-
-            z5 = t1 + z5;
-            z5 = z5.double() + t1;
+            z4 = (t0 - z4).double() + t0;
+            z5 = (t1 + z5).double() + t1;
 
             // For B
             t0 = t3.mul_by_nonresidue();
-            z2 = t0 + z2;
-            z2 = z2.double() + t0;
-
-            z3 = t2 - z3;
-            z3 = z3.double() + t2;
+            z2 = (t0 + z2).double() + t0;
+            z3 = (t2 - z3).double() + t2;
 
             Fp12 {
                 c0: Fp6 {
@@ -115,32 +111,29 @@ impl MillerLoopResult {
 
         #[must_use]
         fn cycolotomic_exp(f: Fp12) -> Fp12 {
-            let mut tmp = Fp12::one();
-            let mut x = BLS_X.reverse_bits();
-            let mut i = 63;
-
+            let mut acc = f;
+            let mut i = 1u64 << 62;
             while i != 0 {
-                if x & 1 == 1 {
-                    tmp *= f;
+                acc = cyclotomic_square(acc);
+                if BLS_X & i != 0 {
+                    acc *= f;
                 }
-
-                tmp = cyclotomic_square(tmp);
-
-                x >>= 1;
-                i -= 1;
+                i >>= 1;
             }
-
-            tmp.conjugate()
+            if BLS_X_IS_NEGATIVE {
+                acc.conjugate()
+            } else {
+                acc
+            }
         }
 
-        let mut f = self.0;
-        let mut t0 = f.frobenius_map(6);
-        Gt(f.invert()
+        Gt(self
+            .0
+            .invert()
             .map(|mut t1| {
-                let mut t2 = t0 * t1;
-                t1 = t2;
-                t2 = t2.frobenius_map(2);
-                t2 *= t1;
+                let mut t0 = self.0.frobenius_map(6);
+                t1 *= t0;
+                let t2 = t1.frobenius_map(2) * t1;
                 t1 = cyclotomic_square(t2).conjugate();
                 let mut t3 = cycolotomic_exp(t2);
                 let mut t4 = cyclotomic_square(t3);
@@ -150,8 +143,7 @@ impl MillerLoopResult {
                 let mut t6 = cycolotomic_exp(t0);
                 t6 *= t4;
                 t4 = cycolotomic_exp(t6);
-                t5 = t5.conjugate();
-                t4 *= t5 * t2;
+                t4 *= t5.conjugate() * t2;
                 t5 = t2.conjugate();
                 t1 *= t2;
                 t1 = t1.frobenius_map(3);
@@ -161,9 +153,7 @@ impl MillerLoopResult {
                 t3 = t3.frobenius_map(2);
                 t3 *= t1;
                 t3 *= t6;
-                f = t3 * t4;
-
-                f
+                t3 * t4
             })
             // We unwrap() because `MillerLoopResult` can only be constructed
             // by a function within this crate, and we uphold the invariant
@@ -237,6 +227,9 @@ impl PartialEq for Gt {
         bool::from(self.ct_eq(other))
     }
 }
+
+#[cfg(feature = "zeroize")]
+impl zeroize::DefaultIsZeroes for Gt {}
 
 impl Gt {
     /// Returns the group identity, which is $1$.
@@ -561,10 +554,10 @@ pub fn multi_miller_loop(terms: &[(&G1Affine, &G2Prepared)]) -> MillerLoopResult
         #[inline]
         fn doubling_step(&mut self, mut f: Self::Output) -> Self::Output {
             let index = self.index;
-            for term in self.terms {
-                let either_identity = term.0.is_identity() | term.1.infinity;
+            for &(p, r) in self.terms {
+                let either_identity = p.is_identity() | r.infinity;
 
-                let new_f = ell(f, &term.1.coeffs[index], term.0);
+                let new_f = ell(f, &r.coeffs[index], p);
                 f = Fp12::conditional_select(&new_f, &f, either_identity);
             }
             self.index += 1;
@@ -574,10 +567,10 @@ pub fn multi_miller_loop(terms: &[(&G1Affine, &G2Prepared)]) -> MillerLoopResult
         #[inline]
         fn addition_step(&mut self, mut f: Self::Output) -> Self::Output {
             let index = self.index;
-            for term in self.terms {
-                let either_identity = term.0.is_identity() | term.1.infinity;
+            for &(p, r) in self.terms {
+                let either_identity = p.is_identity() | r.infinity;
 
-                let new_f = ell(f, &term.1.coeffs[index], term.0);
+                let new_f = ell(f, &r.coeffs[index], p);
                 f = Fp12::conditional_select(&new_f, &f, either_identity);
             }
             self.index += 1;
@@ -673,103 +666,78 @@ trait MillerLoopDriver {
 /// This is a "generic" implementation of the Miller loop to avoid duplicating code
 /// structure elsewhere; instead, we'll write concrete instantiations of
 /// `MillerLoopDriver` for whatever purposes we need (such as caching modes).
+#[inline]
 fn miller_loop<D: MillerLoopDriver>(driver: &mut D) -> D::Output {
-    let mut f = D::one();
-    let mut x = BLS_X.reverse_bits() >> 1;
-    let mut i = 62;
-
+    let mut acc = D::one();
+    let mut i = 1u64 << 62;
     loop {
-        f = driver.doubling_step(f);
-
+        acc = driver.doubling_step(acc);
+        if BLS_X & i != 0 {
+            acc = driver.addition_step(acc);
+        }
+        i >>= 1;
         if i == 0 {
             break;
         }
-
-        if x & 1 == 1 {
-            f = driver.addition_step(f);
-        }
-
-        f = D::square_output(f);
-
-        x >>= 1;
-        i -= 1;
+        acc = D::square_output(acc);
     }
-
     if BLS_X_IS_NEGATIVE {
-        f = D::conjugate(f);
+        D::conjugate(acc)
+    } else {
+        acc
     }
-
-    f
 }
 
+#[inline]
 fn ell(f: Fp12, coeffs: &(Fp2, Fp2, Fp2), p: &G1Affine) -> Fp12 {
-    let mut c0 = coeffs.0;
-    let mut c1 = coeffs.1;
-
-    c0.c0 *= p.y;
-    c0.c1 *= p.y;
+    let (mut c4, mut c1, ref c0) = coeffs;
 
     c1.c0 *= p.x;
     c1.c1 *= p.x;
 
-    f.mul_by_014(&coeffs.2, &c1, &c0)
+    c4.c0 *= p.y;
+    c4.c1 *= p.y;
+
+    f.mul_by_014(c0, &c1, &c4)
 }
 
 fn doubling_step(r: &mut G2Projective) -> (Fp2, Fp2, Fp2) {
     // Adaptation of Algorithm 26, https://eprint.iacr.org/2010/354.pdf
-    let tmp0 = r.x.square();
-    let tmp1 = r.y.square();
-    let tmp2 = tmp1.square();
-    let tmp3 = (tmp1 + r.x).square() - tmp0 - tmp2;
-    let tmp3 = tmp3.double();
-    let tmp4 = tmp0.double() + tmp0;
-    let tmp6 = r.x + tmp4;
-    let tmp5 = tmp4.square();
+    let xsquared = r.x.square();
+    let ysquared_2 = r.y.square().double(); // 2y^2
+    let ysquared_4 = ysquared_2.double(); // 4y^2
     let zsquared = r.z.square();
-    r.x = tmp5 - tmp3.double();
-    r.z = (r.z + r.y).square() - tmp1 - zsquared;
-    r.y = (tmp3 - r.x) * tmp4;
-    let tmp2 = tmp2.double().double().double();
-    r.y -= tmp2;
-    let tmp3 = tmp4 * zsquared;
-    let tmp3 = -tmp3.double();
-    let tmp6 = tmp6.square() - tmp0 - tmp5;
-    let tmp1 = tmp1.double().double();
-    let tmp6 = tmp6 - tmp1;
-    let tmp0 = r.z * zsquared;
-    let tmp0 = tmp0.double();
+    let t1 = xsquared.double() + xsquared; // 3x^2
+    let t2 = t1 * r.x; // 3x^3
+    let t3 = t2.double() + t2; // 9x^3
 
-    (tmp0, tmp3, tmp6)
+    r.x *= t3 - ysquared_4.double(); // 9x^4 - 8xy^2
+    r.z = (r.y * r.z).double(); // 2yz
+    r.y = (ysquared_4 - t2) * t3 - ysquared_2.square().double(); // 36x^3.y^2 - 27x^6 - 8y^4
+
+    let c0 = (r.z * zsquared).double(); // 4yz^3
+    let c1 = -(t1 * zsquared).double(); // -6x^2.z^2
+    let c2 = t2.double() - ysquared_4; // 6x^3 - 4y^2
+    (c0, c1, c2)
 }
 
 fn addition_step(r: &mut G2Projective, q: &G2Affine) -> (Fp2, Fp2, Fp2) {
     // Adaptation of Algorithm 27, https://eprint.iacr.org/2010/354.pdf
-    let zsquared = r.z.square();
-    let ysquared = q.y.square();
-    let t0 = zsquared * q.x;
-    let t1 = ((q.y + r.z).square() - ysquared - zsquared) * zsquared;
-    let t2 = t0 - r.x;
-    let t3 = t2.square();
-    let t4 = t3.double().double();
-    let t5 = t4 * t2;
-    let t6 = t1 - r.y.double();
-    let t9 = t6 * q.x;
-    let t7 = t4 * r.x;
-    r.x = t6.square() - t5 - t7.double();
-    r.z = (r.z + t2).square() - zsquared - t3;
-    let t10 = q.y + r.z;
-    let t8 = (t7 - r.x) * t6;
-    let t0 = r.y * t5;
-    let t0 = t0.double();
-    r.y = t8 - t0;
-    let t10 = t10.square() - ysquared;
-    let ztsquared = r.z.square();
-    let t10 = t10 - ztsquared;
-    let t9 = t9.double() - t10;
-    let t10 = r.z.double();
-    let t1 = -t6.double();
+    let rzsquared = r.z.square();
+    let t2 = rzsquared * q.x - r.x; // rz^2.qx - rx
+    let t4 = t2.double().square(); // 4.t2^2
+    let t5 = t2 * t4; // 4.t2^3
+    let t6 = (q.y * r.z * rzsquared - r.y).double(); // 2rz^3.qy - 2ry
+    let t7 = t4 * r.x; // 4.t2^2.rx
 
-    (t10, t1, t9)
+    r.x = t6.square() - t5 - t7.double();
+    r.y = Fp2::lin_comb(&(t7 - r.x), &t6, &-r.y.double(), &t5);
+    r.z *= t2.double();
+
+    let c0 = r.z.double(); // 4rz^3.qx - 4rx.rz
+    let c1 = -t6.double(); // -4rz^3.qy + 4ry
+    let c2 = Fp2::lin_comb(&t6, &q.x, &-r.z, &q.y).double(); // 2rz^3.qx.qy - 2ry.qx
+    (c0, c1, c2)
 }
 
 impl PairingCurveAffine for G1Affine {
@@ -792,7 +760,7 @@ impl PairingCurveAffine for G2Affine {
 
 /// A [`pairing::Engine`] for BLS12-381 pairing operations.
 #[cfg_attr(docsrs, doc(cfg(feature = "pairings")))]
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Bls12;
 
 impl Engine for Bls12 {

@@ -897,22 +897,20 @@ impl G2Projective {
 
     /// Multiply `self` by `crate::BLS_X`, using double and add.
     fn mul_by_x(&self) -> G2Projective {
-        let mut xself = G2Projective::identity();
-        // NOTE: in BLS12-381 we can just skip the first bit.
-        let mut x = crate::BLS_X >> 1;
+        let mut i = 1u64 << 62;
         let mut acc = *self;
-        while x != 0 {
+        while i != 0 {
             acc = acc.double();
-            if x & 1 == 1 {
-                xself += acc;
+            if crate::BLS_X & i != 0 {
+                acc += self;
             }
-            x >>= 1;
+            i >>= 1;
         }
-        // finally, flip the sign
         if crate::BLS_X_IS_NEGATIVE {
-            xself = -xself;
+            -acc
+        } else {
+            acc
         }
-        xself
     }
 
     /// Clears the cofactor, using [Budroni-Pintore](https://ia.cr/2017/419).

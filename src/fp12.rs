@@ -13,22 +13,58 @@ use rand_core::RngCore;
 pub(crate) const FP12_FROBENIUS_COEFFS: [Fp2; 3] = [
     Fp2 {
         c0: Fp::from_hex_unchecked(
-        "1904d3bf02bb0667c231beb4202c0d1f0fd603fd3cbd5f4f7b2443d784bab9c4f67ea53d63e7813d8d0775ed92235fb8"
+            "1904d3bf02bb0667\
+            c231beb4202c0d1f\
+            0fd603fd3cbd5f4f\
+            7b2443d784bab9c4\
+            f67ea53d63e7813d\
+            8d0775ed92235fb8",
         ),
-        c1: Fp::from_hex_unchecked("00fc3e2b36c4e03288e9e902231f9fb854a14787b6c7b36fec0c8ec971f63c5f282d5ac14d6c7ec22cf78a126ddc4af3"),
+        c1: Fp::from_hex_unchecked(
+            "00fc3e2b36c4e032\
+             88e9e902231f9fb8\
+             54a14787b6c7b36f\
+             ec0c8ec971f63c5f\
+             282d5ac14d6c7ec2\
+             2cf78a126ddc4af3",
+        ),
     },
     Fp2 {
         c0: Fp::from_hex_unchecked(
-        "135203e60180a68ee2e9c448d77a2cd91c3dedd930b1cf60ef396489f61eb45e304466cf3e67fa0af1ee7b04121bdea2"
+            "135203e60180a68e\
+            e2e9c448d77a2cd9\
+            1c3dedd930b1cf60\
+            ef396489f61eb45e\
+            304466cf3e67fa0a\
+            f1ee7b04121bdea2",
         ),
-        c1: Fp::from_hex_unchecked("06af0e0437ff400b6831e36d6bd17ffe48395dabc2d3435e77f76e17009241c5ee67992f72ec05f4c81084fbede3cc09"),
+        c1: Fp::from_hex_unchecked(
+            "06af0e0437ff400b\
+             6831e36d6bd17ffe\
+             48395dabc2d3435e\
+             77f76e17009241c5\
+             ee67992f72ec05f4\
+             c81084fbede3cc09",
+        ),
     },
     Fp2 {
         c0: Fp::from_hex_unchecked(
-        "144e4211384586c16bd3ad4afa99cc9170df3560e77982d0db45f3536814f0bd5871c1908bd478cd1ee605167ff82995"
+            "144e4211384586c1\
+            6bd3ad4afa99cc91\
+            70df3560e77982d0\
+            db45f3536814f0bd\
+            5871c1908bd478cd\
+            1ee605167ff82995",
         ),
-        c1: Fp::from_hex_unchecked("05b2cfd9013a5fd8df47fa6b48b1e045f39816240c0b8fee8beadf4d8e9c0566c63a3e6e257f87329b18fae980078116"),
-    }
+        c1: Fp::from_hex_unchecked(
+            "05b2cfd9013a5fd8\
+             df47fa6b48b1e045\
+             f39816240c0b8fee\
+             8beadf4d8e9c0566\
+             c63a3e6e257f8732\
+             9b18fae980078116",
+        ),
+    },
 ];
 
 /// This represents an element $c_0 + c_1 w$ of $\mathbb{F}_{p^12} = \mathbb{F}_{p^6} / w^2 - v$.
@@ -135,16 +171,12 @@ impl Fp12 {
         }
     }
 
+    #[inline(always)]
     pub fn mul_by_014(&self, c0: &Fp2, c1: &Fp2, c4: &Fp2) -> Fp12 {
         let aa = self.c0.mul_by_01(c0, c1);
         let bb = self.c1.mul_by_1(c4);
-        let o = c1 + c4;
-        let c1 = self.c1 + self.c0;
-        let c1 = c1.mul_by_01(c0, &o);
-        let c1 = c1 - aa - bb;
-        let c0 = bb;
-        let c0 = c0.mul_by_nonresidue();
-        let c0 = c0 + aa;
+        let c1 = (self.c1 + self.c0).mul_by_01(c0, &(c1 + c4)) - (aa + bb);
+        let c0 = bb.mul_by_nonresidue() + aa;
 
         Fp12 { c0, c1 }
     }
@@ -163,7 +195,7 @@ impl Fp12 {
     }
 
     /// Raises this element to p^n.
-    #[inline(always)]
+    #[inline]
     pub fn frobenius_map(&self, n: usize) -> Self {
         let c0 = self.c0.frobenius_map(n);
         let c1 = self.c1.frobenius_map(n);
@@ -201,17 +233,15 @@ impl Fp12 {
     #[inline]
     pub fn square(&self) -> Self {
         let ab = self.c0 * self.c1;
-        let c0c1 = self.c0 + self.c1;
-        let c0 = self.c1.mul_by_nonresidue();
-        let c0 = c0 + self.c0;
-        let c0 = c0 * c0c1;
-        let c0 = c0 - ab;
+        let c0 = self.c1.mul_by_nonresidue() + self.c0;
+        let c0 = c0 * (self.c0 + self.c1);
+        let c0 = c0 - (ab + ab.mul_by_nonresidue());
         let c1 = ab.double();
-        let c0 = c0 - ab.mul_by_nonresidue();
 
         Fp12 { c0, c1 }
     }
 
+    #[inline]
     pub fn invert(&self) -> CtOption<Self> {
         (self.c0.square() - self.c1.square().mul_by_nonresidue())
             .invert()
@@ -229,13 +259,12 @@ impl<'a, 'b> ops::Mul<&'b Fp12> for &'a Fp12 {
     fn mul(self, other: &'b Fp12) -> Self::Output {
         let aa = self.c0 * other.c0;
         let bb = self.c1 * other.c1;
+        let c0 = bb.mul_by_nonresidue();
+        let c0 = c0 + aa;
         let o = other.c0 + other.c1;
         let c1 = self.c1 + self.c0;
         let c1 = c1 * o;
-        let c1 = c1 - aa;
-        let c1 = c1 - bb;
-        let c0 = bb.mul_by_nonresidue();
-        let c0 = c0 + aa;
+        let c1 = c1 - (aa + bb);
 
         Fp12 { c0, c1 }
     }
@@ -663,6 +692,21 @@ fn test_arithmetic() {
         assert_eq!(a.frobenius_map(i).frobenius_map(1), a.frobenius_map(i + 1));
     }
     assert_eq!(a, a.frobenius_map(12));
+
+    let d = Fp12 {
+        c0: Fp6 {
+            c0: c.c0.c0,
+            c1: c.c0.c1,
+            c2: Fp2::zero(),
+        },
+        c1: Fp6 {
+            c0: Fp2::zero(),
+            c1: c.c1.c1,
+            c2: Fp2::zero(),
+        },
+    };
+
+    assert_eq!(a.mul_by_014(&d.c0.c0, &d.c0.c1, &d.c1.c1), a * d);
 }
 
 #[cfg(feature = "zeroize")]

@@ -177,6 +177,7 @@ impl Fp6 {
         }
     }
 
+    #[inline]
     pub fn mul_by_1(&self, c1: &Fp2) -> Fp6 {
         Fp6 {
             c0: (self.c2 * c1).mul_by_nonresidue(),
@@ -185,13 +186,11 @@ impl Fp6 {
         }
     }
 
+    #[inline]
     pub fn mul_by_01(&self, c0: &Fp2, c1: &Fp2) -> Fp6 {
-        let t1 = self.c2 * c1;
-        let t1 = t1.mul_by_nonresidue() + self.c0 * c0;
-
-        let t2 = self.c1 * c0 + self.c0 * c1;
-
-        let t3 = self.c2 * c0 + self.c1 * c1;
+        let t1 = Fp2::lin_comb(&self.c2, &c1.mul_by_nonresidue(), &self.c0, c0);
+        let t2 = Fp2::lin_comb(&self.c1, c0, &self.c0, c1);
+        let t3 = Fp2::lin_comb(&self.c2, c0, &self.c1, c1);
 
         Fp6 {
             c0: t1,
@@ -201,6 +200,7 @@ impl Fp6 {
     }
 
     /// Multiply by quadratic nonresidue v.
+    #[inline(always)]
     pub const fn mul_by_nonresidue(&self) -> Self {
         // Given a + bv + cv^2, this produces
         //     av + bv^2 + cv^3
@@ -215,7 +215,7 @@ impl Fp6 {
     }
 
     /// Raises this element to p^n.
-    #[inline(always)]
+    #[inline]
     pub fn frobenius_map(&self, n: usize) -> Self {
         let c0 = self.c0.frobenius_map(n);
         let c1 = self.c1.frobenius_map(n);
@@ -312,6 +312,7 @@ impl Fp6 {
         // Each of these is a "sum of products", which we can compute efficiently.
 
         let a = self;
+        let neg_a_c1 = [-a.c0.c1, -a.c1.c1, -a.c2.c1];
         let b10_p_b11 = b.c1.c0 + b.c1.c1;
         let b10_m_b11 = b.c1.c0 - b.c1.c1;
         let b20_p_b21 = b.c2.c0 + b.c2.c1;
@@ -320,7 +321,14 @@ impl Fp6 {
         Fp6 {
             c0: Fp2 {
                 c0: Fp::sum_of_products(
-                    &[a.c0.c0, -a.c0.c1, a.c1.c0, -a.c1.c1, a.c2.c0, -a.c2.c1],
+                    &[
+                        a.c0.c0,
+                        neg_a_c1[0],
+                        a.c1.c0,
+                        neg_a_c1[1],
+                        a.c2.c0,
+                        neg_a_c1[2],
+                    ],
                     &[b.c0.c0, b.c0.c1, b20_m_b21, b20_p_b21, b10_m_b11, b10_p_b11],
                 ),
                 c1: Fp::sum_of_products(
@@ -330,7 +338,14 @@ impl Fp6 {
             },
             c1: Fp2 {
                 c0: Fp::sum_of_products(
-                    &[a.c0.c0, -a.c0.c1, a.c1.c0, -a.c1.c1, a.c2.c0, -a.c2.c1],
+                    &[
+                        a.c0.c0,
+                        neg_a_c1[0],
+                        a.c1.c0,
+                        neg_a_c1[1],
+                        a.c2.c0,
+                        neg_a_c1[2],
+                    ],
                     &[b.c1.c0, b.c1.c1, b.c0.c0, b.c0.c1, b20_m_b21, b20_p_b21],
                 ),
                 c1: Fp::sum_of_products(
@@ -340,7 +355,14 @@ impl Fp6 {
             },
             c2: Fp2 {
                 c0: Fp::sum_of_products(
-                    &[a.c0.c0, -a.c0.c1, a.c1.c0, -a.c1.c1, a.c2.c0, -a.c2.c1],
+                    &[
+                        a.c0.c0,
+                        neg_a_c1[0],
+                        a.c1.c0,
+                        neg_a_c1[1],
+                        a.c2.c0,
+                        neg_a_c1[2],
+                    ],
                     &[b.c2.c0, b.c2.c1, b.c1.c0, b.c1.c1, b.c0.c0, b.c0.c1],
                 ),
                 c1: Fp::sum_of_products(
@@ -354,38 +376,32 @@ impl Fp6 {
     #[inline]
     pub fn square(&self) -> Self {
         let s0 = self.c0.square();
-        let ab = self.c0 * self.c1;
-        let s1 = ab.double();
+        let s1 = (self.c0 * self.c1).double();
         let s2 = (self.c0 - self.c1 + self.c2).square();
-        let bc = self.c1 * self.c2;
-        let s3 = bc.double();
+        let s3 = (self.c1 * self.c2).double();
         let s4 = self.c2.square();
 
-        Fp6 {
+        return Fp6 {
             c0: s3.mul_by_nonresidue() + s0,
             c1: s4.mul_by_nonresidue() + s1,
             c2: s1 + s2 + s3 - s0 - s4,
-        }
+        };
     }
 
     #[inline]
     pub fn invert(&self) -> CtOption<Self> {
-        let c0 = (self.c1 * self.c2).mul_by_nonresidue();
-        let c0 = self.c0.square() - c0;
+        let c0n = -self.c0;
+        let c2r = self.c2.mul_by_nonresidue();
 
-        let c1 = self.c2.square().mul_by_nonresidue();
-        let c1 = c1 - (self.c0 * self.c1);
-
-        let c2 = self.c1.square();
-        let c2 = c2 - (self.c0 * self.c2);
-
-        let tmp = ((self.c1 * c2) + (self.c2 * c1)).mul_by_nonresidue();
-        let tmp = tmp + (self.c0 * c0);
+        let c0 = Fp2::lin_comb(&self.c0, &self.c0, &-self.c1, &c2r);
+        let c1 = Fp2::lin_comb(&self.c2, &c2r, &c0n, &self.c1);
+        let c2 = Fp2::lin_comb(&self.c1, &self.c1, &c0n, &self.c2);
+        let tmp = Fp2::lin_comb(&self.c0, &c0, &c2r, &c1) + (self.c1 * c2).mul_by_nonresidue();
 
         tmp.invert().map(|t| Fp6 {
-            c0: t * c0,
-            c1: t * c1,
-            c2: t * c2,
+            c0: c0.mul(&t),
+            c1: c1.mul(&t),
+            c2: c2.mul(&t),
         })
     }
 
@@ -415,15 +431,28 @@ impl<'a, 'b> ops::Mul<&'b Fp6> for &'a Fp6 {
     }
 }
 
+impl<'a, 'b> ops::Mul<&'b Fp2> for &'a Fp6 {
+    type Output = Fp6;
+
+    #[inline]
+    fn mul(self, other: &'b Fp2) -> Self::Output {
+        Fp6 {
+            c0: self.c0.mul(other),
+            c1: self.c1.mul(other),
+            c2: self.c2.mul(other),
+        }
+    }
+}
+
 impl<'a, 'b> ops::Add<&'b Fp6> for &'a Fp6 {
     type Output = Fp6;
 
     #[inline]
     fn add(self, rhs: &'b Fp6) -> Self::Output {
         Fp6 {
-            c0: self.c0 + rhs.c0,
-            c1: self.c1 + rhs.c1,
-            c2: self.c2 + rhs.c2,
+            c0: self.c0.add(rhs.c0),
+            c1: self.c1.add(rhs.c1),
+            c2: self.c2.add(rhs.c2),
         }
     }
 }
@@ -433,11 +462,7 @@ impl<'a> ops::Neg for &'a Fp6 {
 
     #[inline]
     fn neg(self) -> Self::Output {
-        Fp6 {
-            c0: -self.c0,
-            c1: -self.c1,
-            c2: -self.c2,
-        }
+        self.neg()
     }
 }
 
@@ -446,7 +471,7 @@ impl ops::Neg for Fp6 {
 
     #[inline]
     fn neg(self) -> Self::Output {
-        -&self
+        (&self).neg()
     }
 }
 
@@ -456,15 +481,16 @@ impl<'a, 'b> ops::Sub<&'b Fp6> for &'a Fp6 {
     #[inline]
     fn sub(self, rhs: &'b Fp6) -> Self::Output {
         Fp6 {
-            c0: self.c0 - rhs.c0,
-            c1: self.c1 - rhs.c1,
-            c2: self.c2 - rhs.c2,
+            c0: self.c0.sub(rhs.c0),
+            c1: self.c1.sub(rhs.c1),
+            c2: self.c2.sub(rhs.c2),
         }
     }
 }
 
 impl_binops_additive!(Fp6, Fp6);
 impl_binops_multiplicative!(Fp6, Fp6);
+impl_binops_multiplicative!(Fp6, Fp2);
 
 #[test]
 fn test_arithmetic() {
@@ -658,6 +684,24 @@ fn test_arithmetic() {
         assert_eq!(a.frobenius_map(i).frobenius_map(1), a.frobenius_map(i + 1));
     }
     assert_eq!(a, a.frobenius_map(6));
+
+    assert_eq!(
+        a.mul_by_1(&b.c1),
+        a * Fp6 {
+            c0: Fp2::zero(),
+            c1: b.c1,
+            c2: Fp2::zero()
+        }
+    );
+
+    assert_eq!(
+        a.mul_by_01(&b.c0, &b.c1),
+        a * Fp6 {
+            c0: b.c0,
+            c1: b.c1,
+            c2: Fp2::zero()
+        }
+    );
 }
 
 #[cfg(feature = "zeroize")]

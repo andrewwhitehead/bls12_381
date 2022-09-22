@@ -186,6 +186,7 @@ impl Fp2 {
             | (self.c1.is_zero() & self.c0.lexicographically_largest())
     }
 
+    #[inline(always)]
     pub const fn square(&self) -> Fp2 {
         // Complex squaring:
         //
@@ -198,7 +199,6 @@ impl Fp2 {
         //
         // c0' = (c0 + c1) * (c0 - c1)
         // c1' = 2 * c0 * c1
-
         let a = self.c0.add(&self.c1);
         let b = self.c0.sub(&self.c1);
         let c = self.c0.double();
@@ -209,6 +209,7 @@ impl Fp2 {
         }
     }
 
+    #[inline(always)]
     pub fn mul(&self, rhs: &Fp2) -> Fp2 {
         // F_{p^2} x F_{p^2} multiplication implemented with operand scanning (schoolbook)
         // computes the result as:
@@ -228,6 +229,15 @@ impl Fp2 {
         }
     }
 
+    #[inline(always)]
+    pub fn lin_comb(a: &Self, b: &Self, c: &Self, d: &Self) -> Self {
+        Fp2 {
+            c0: Fp::sum_of_products(&[a.c0, -a.c1, c.c0, -c.c1], &[b.c0, b.c1, d.c0, d.c1]),
+            c1: Fp::sum_of_products(&[a.c0, a.c1, c.c0, c.c1], &[b.c1, b.c0, d.c1, d.c0]),
+        }
+    }
+
+    #[inline(always)]
     pub const fn add(&self, rhs: &Fp2) -> Fp2 {
         Fp2 {
             c0: self.c0.add(&rhs.c0),
@@ -235,6 +245,7 @@ impl Fp2 {
         }
     }
 
+    #[inline(always)]
     pub const fn double(&self) -> Fp2 {
         Fp2 {
             c0: self.c0.double(),
@@ -242,6 +253,7 @@ impl Fp2 {
         }
     }
 
+    #[inline(always)]
     pub const fn sub(&self, rhs: &Fp2) -> Fp2 {
         Fp2 {
             c0: self.c0.sub(&rhs.c0),
@@ -249,6 +261,7 @@ impl Fp2 {
         }
     }
 
+    #[inline(always)]
     pub const fn neg(&self) -> Fp2 {
         Fp2 {
             c0: self.c0.neg(),
@@ -272,10 +285,10 @@ impl Fp2 {
             ]);
 
             // alpha = a1^2 * self = self^((p - 3) / 2 + 1) = self^((p - 1) / 2)
-            let alpha = a1.square() * self;
+            let alpha = a1.square().mul(&self);
 
             // x0 = self^((p + 1) / 4)
-            let x0 = a1 * self;
+            let x0 = a1.mul(&self);
 
             // In the event that alpha = -1, the element is order p - 1 and so
             // we're just trying to get the square of an element of the subfield
@@ -326,12 +339,10 @@ impl Fp2 {
         // of (a + bu). Importantly, this can be computing using
         // only a single inversion in Fp.
 
-        Fp::sum_of_products(&[self.c0, self.c1], &[self.c0, self.c1])
-            .invert()
-            .map(|t| Fp2 {
-                c0: self.c0 * t,
-                c1: self.c1 * -t,
-            })
+        (self.c0.square() + self.c1.square()).invert().map(|t| Fp2 {
+            c0: self.c0 * t,
+            c1: self.c1 * -t,
+        })
     }
 
     /// Although this is labeled "vartime", it is only
