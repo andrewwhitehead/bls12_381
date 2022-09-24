@@ -484,7 +484,7 @@ impl G2Affine {
     /// true unless an "unchecked" API was used.
     pub fn is_on_curve(&self) -> Choice {
         // y^2 - x^3 ?= 4(u + 1)
-        (self.y.square() - (self.x.square() * self.x)).ct_eq(&B) | self.is_identity()
+        Fp2::lin_comb(&self.y, &self.y, &-self.x.square(), &self.x).ct_eq(&B) | self.is_identity()
     }
 
     /// Negate the element.
@@ -694,23 +694,12 @@ impl G2Projective {
         // Algorithm 9, https://eprint.iacr.org/2015/1060.pdf
 
         let t0 = self.y.square();
-        let z3 = t0 + t0;
-        let z3 = z3 + z3;
-        let z3 = z3 + z3;
-        let t1 = self.y * self.z;
-        let t2 = self.z.square();
-        let t2 = mul_by_3b(t2);
-        let x3 = t2 * z3;
-        let y3 = t0 + t2;
-        let z3 = t1 * z3;
-        let t1 = t2 + t2;
-        let t2 = t1 + t2;
-        let t0 = t0 - t2;
-        let y3 = t0 * y3;
-        let y3 = x3 + y3;
-        let t1 = self.x * self.y;
-        let x3 = t0 * t1;
-        let x3 = x3 + x3;
+        let t2 = mul_by_3b(self.z.square());
+        let t3 = t0.double().double().double();
+        let t4 = t0 - (t2.double() + t2);
+        let x3 = (t4 * self.x * self.y).double();
+        let y3 = Fp2::lin_comb(&t2, &t3, &t4, &(t0 + t2));
+        let z3 = t3 * self.y * self.z;
 
         let tmp = G2Projective {
             x: x3,
@@ -728,36 +717,17 @@ impl G2Projective {
         let t0 = self.x * rhs.x;
         let t1 = self.y * rhs.y;
         let t2 = self.z * rhs.z;
-        let t3 = self.x + self.y;
-        let t4 = rhs.x + rhs.y;
-        let t3 = t3 * t4;
-        let t4 = t0 + t1;
-        let t3 = t3 - t4;
-        let t4 = self.y + self.z;
-        let x3 = rhs.y + rhs.z;
-        let t4 = t4 * x3;
-        let x3 = t1 + t2;
-        let t4 = t4 - x3;
-        let x3 = self.x + self.z;
-        let y3 = rhs.x + rhs.z;
-        let x3 = x3 * y3;
-        let y3 = t0 + t2;
-        let y3 = x3 - y3;
-        let x3 = t0 + t0;
-        let t0 = x3 + t0;
+        let t3 = (self.x + self.y) * (rhs.x + rhs.y) - (t0 + t1);
+        let t4 = (self.y + self.z) * (rhs.y + rhs.z) - (t1 + t2);
+        let y3 = (self.x + self.z) * (rhs.x + rhs.z) - (t0 + t2);
+        let t0 = t0.double() + t0;
         let t2 = mul_by_3b(t2);
         let z3 = t1 + t2;
         let t1 = t1 - t2;
         let y3 = mul_by_3b(y3);
-        let x3 = t4 * y3;
-        let t2 = t3 * t1;
-        let x3 = t2 - x3;
-        let y3 = y3 * t0;
-        let t1 = t1 * z3;
-        let y3 = t1 + y3;
-        let t0 = t0 * t3;
-        let z3 = z3 * t4;
-        let z3 = z3 + t0;
+        let x3 = Fp2::lin_comb(&y3, &-t4, &t3, &t1);
+        let y3 = Fp2::lin_comb(&y3, &t0, &t1, &z3);
+        let z3 = Fp2::lin_comb(&z3, &t4, &t0, &t3);
 
         G2Projective {
             x: x3,
@@ -772,30 +742,17 @@ impl G2Projective {
 
         let t0 = self.x * rhs.x;
         let t1 = self.y * rhs.y;
-        let t3 = rhs.x + rhs.y;
-        let t4 = self.x + self.y;
-        let t3 = t3 * t4;
-        let t4 = t0 + t1;
-        let t3 = t3 - t4;
-        let t4 = rhs.y * self.z;
-        let t4 = t4 + self.y;
-        let y3 = rhs.x * self.z;
-        let y3 = y3 + self.x;
-        let x3 = t0 + t0;
-        let t0 = x3 + t0;
+        let t3 = (rhs.x + rhs.y) * (self.x + self.y) - (t0 + t1);
+        let t4 = (rhs.y * self.z) + self.y;
+        let y3 = (rhs.x * self.z) + self.x;
+        let t0 = t0.double() + t0;
         let t2 = mul_by_3b(self.z);
         let z3 = t1 + t2;
         let t1 = t1 - t2;
         let y3 = mul_by_3b(y3);
-        let x3 = t4 * y3;
-        let t2 = t3 * t1;
-        let x3 = t2 - x3;
-        let y3 = y3 * t0;
-        let t1 = t1 * z3;
-        let y3 = t1 + y3;
-        let t0 = t0 * t3;
-        let z3 = z3 * t4;
-        let z3 = z3 + t0;
+        let x3 = Fp2::lin_comb(&y3, &-t4, &t3, &t1);
+        let y3 = Fp2::lin_comb(&y3, &t0, &t1, &z3);
+        let z3 = Fp2::lin_comb(&z3, &t4, &t0, &t3);
 
         let tmp = G2Projective {
             x: x3,
@@ -830,7 +787,7 @@ impl G2Projective {
 
     fn psi(&self) -> G2Projective {
         // 1 / ((u+1) ^ ((q-1)/3))
-        let psi_coeff_x = Fp2 {
+        const PSI_COEFF_X: Fp2 = Fp2 {
             c0: Fp::zero(),
             c1: Fp::from_raw_unchecked([
                 0x890dc9e4867545c3,
@@ -842,7 +799,7 @@ impl G2Projective {
             ]),
         };
         // 1 / ((u+1) ^ (p-1)/2)
-        let psi_coeff_y = Fp2 {
+        const PSI_COEFF_Y: Fp2 = Fp2 {
             c0: Fp::from_raw_unchecked([
                 0x3e2f585da55c9ad1,
                 0x4294213d86c18183,
@@ -863,9 +820,9 @@ impl G2Projective {
 
         G2Projective {
             // x = frobenius(x)/((u+1)^((p-1)/3))
-            x: self.x.frobenius_map(1) * psi_coeff_x,
+            x: self.x.frobenius_map(1) * PSI_COEFF_X,
             // y = frobenius(y)/(u+1)^((p-1)/2)
-            y: self.y.frobenius_map(1) * psi_coeff_y,
+            y: self.y.frobenius_map(1) * PSI_COEFF_Y,
             // z = frobenius(z)
             z: self.z.frobenius_map(1),
         }
@@ -873,7 +830,7 @@ impl G2Projective {
 
     fn psi2(&self) -> G2Projective {
         // 1 / 2 ^ ((q-1)/3)
-        let psi2_coeff_x = Fp2 {
+        const PSI2_COEFF_X: Fp2 = Fp2 {
             c0: Fp::from_raw_unchecked([
                 0xcd03c9e48671f071,
                 0x5dab22461fcda5d2,
@@ -887,7 +844,7 @@ impl G2Projective {
 
         G2Projective {
             // x = frobenius^2(x)/2^((p-1)/3); note that q^2 is the order of the field.
-            x: self.x * psi2_coeff_x,
+            x: self.x * PSI2_COEFF_X,
             // y = -frobenius^2(y); note that q^2 is the order of the field.
             y: self.y.neg(),
             // z = z
@@ -923,9 +880,9 @@ impl G2Projective {
 
         self.double().psi2() // psi^2(2P)
             + (t1 + t2).mul_by_x() // psi^2(2P) + [x^2] P + [x] psi(P)
-            - t1 // psi^2(2P) + [x^2 - x] P + [x] psi(P)
-            - t2 // psi^2(2P) + [x^2 - x] P + [x - 1] psi(P)
-            - self // psi^2(2P) + [x^2 - x - 1] P + [x - 1] psi(P)
+            - (t1 // psi^2(2P) + [x^2 - x] P + [x] psi(P)
+            + t2 // psi^2(2P) + [x^2 - x] P + [x - 1] psi(P)
+            + self) // psi^2(2P) + [x^2 - x - 1] P + [x - 1] psi(P)
     }
 
     /// Converts a batch of `G2Projective` elements into `G2Affine` elements. This
@@ -976,8 +933,12 @@ impl G2Projective {
     pub fn is_on_curve(&self) -> Choice {
         // Y^2 Z = X^3 + b Z^3
 
-        (self.y.square() * self.z).ct_eq(&(self.x.square() * self.x + self.z.square() * self.z * B))
-            | self.z.is_zero()
+        (self.y.square() * self.z).ct_eq(&Fp2::lin_comb(
+            &self.x.square(),
+            &self.x,
+            &(self.z.square() * B),
+            &self.z,
+        )) | self.z.is_zero()
     }
 
     /// Negate the element.
