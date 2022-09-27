@@ -745,6 +745,27 @@ impl G1Projective {
         acc
     }
 
+    /// Calculate a linear combination of two points multiplied by scalars.
+    #[inline]
+    pub fn lin_comb(x: &G1Projective, a: &Scalar, y: &G1Projective, b: &Scalar) -> G1Projective {
+        let (a, b) = (a.to_canonical(), b.to_canonical());
+        let slots = [G1Projective::identity(), *x, *y, x + y];
+        let mut acc = G1Projective::identity();
+        let mut idx = Scalar::BIT_SIZE - 1;
+
+        loop {
+            let slot = (a.bit(idx) + 2 * b.bit(idx)) as usize;
+            acc = acc.add(&slots[slot]);
+            if idx == 0 {
+                break;
+            }
+            idx -= 1;
+            acc = acc.double();
+        }
+
+        acc
+    }
+
     /// Multiply `self` by `crate::BLS_X`, using double and add.
     #[inline]
     fn mul_by_x(&self) -> G1Projective {
@@ -1548,6 +1569,26 @@ fn test_projective_scalar_multiplication() {
     let c = a * b;
 
     assert_eq!((g * a) * b, g * c);
+
+    assert_eq!(
+        G1Projective::lin_comb(
+            &G1Projective::generator(),
+            &a,
+            &G1Projective::identity(),
+            &b
+        ),
+        G1Projective::generator() * a
+    );
+
+    assert_eq!(
+        G1Projective::lin_comb(
+            &G1Projective::generator(),
+            &a,
+            &G1Projective::generator().double(),
+            &b
+        ),
+        G1Projective::generator() * (a + b.double())
+    );
 }
 
 #[test]
