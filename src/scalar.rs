@@ -420,6 +420,15 @@ impl Scalar {
         CtOption::new(Scalar(t0), !self.0.is_zero())
     }
 
+    /// Computes the multiplicative inverse of this element,
+    /// failing if the element is zero.
+    pub const fn invert_vartime(&self) -> Option<Self> {
+        match FIELD.invert_vartime(&self.0) {
+            Some(s) => Some(Scalar(s)),
+            None => None,
+        }
+    }
+
     /// Multiplies `rhs` by `self`, returning the result.
     #[inline]
     pub const fn mul(&self, rhs: &Self) -> Self {
@@ -920,6 +929,21 @@ fn test_inversion() {
 
     for _ in 0..100 {
         let mut tmp2 = tmp.invert().unwrap();
+        tmp2 *= tmp;
+
+        assert_eq!(tmp2, Scalar::one());
+
+        tmp += Scalar(FIELD.r2);
+    }
+
+    assert!(Scalar::zero().invert_vartime().is_none());
+    assert_eq!(Scalar::one().invert_vartime(), Some(Scalar::one()));
+    assert_eq!((-&Scalar::one()).invert_vartime(), Some(-&Scalar::one()));
+
+    let mut tmp = Scalar(FIELD.r2);
+
+    for _ in 0..100 {
+        let mut tmp2 = tmp.invert_vartime().unwrap();
         tmp2 *= tmp;
 
         assert_eq!(tmp2, Scalar::one());

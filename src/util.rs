@@ -120,6 +120,11 @@ impl<const LIMBS: usize> Montgomery<LIMBS> {
     }
 
     #[inline(always)]
+    pub const fn invert_vartime(&self, uint: &UInt<LIMBS>) -> Option<UInt<LIMBS>> {
+        uint_invert_vartime_mod(&uint, &self.r2, &self.modulus, self.inv)
+    }
+
+    #[inline(always)]
     pub const fn sum_of_products<const T: usize>(
         &self,
         a: &[UInt<LIMBS>; T],
@@ -303,6 +308,87 @@ pub const fn uint_pow_vartime_mod<const LIMBS: usize, const T: usize>(
         i -= 1;
     }
     res
+}
+
+/// Computes the multiplicative inverse of this element,
+/// failing if the element is zero.
+pub const fn uint_invert_vartime_mod<const LIMBS: usize>(
+    uint: &UInt<LIMBS>,
+    r2: &UInt<LIMBS>,
+    modulus: &UInt<LIMBS>,
+    inv: Limb,
+) -> Option<UInt<LIMBS>> {
+    // Based on:
+    // The Montgomery Modular Inverse - Revisited -- E Savas, CK Koç, 2000
+    // with modification from:
+    // Improved Montgomery modular inverse algorithm - C McIvor, M McLoone, JV McCanny, 2004
+    let n = LIMBS * Limb::BIT_SIZE;
+    let mut v = *uint;
+    let mut u = *modulus;
+    let mut r = UInt::ZERO;
+    let mut s = UInt::ONE;
+    let mut k = 0;
+
+    #[inline(always)]
+    const fn uint_is_nonzero_vartime<const LIMBS: usize>(uint: &UInt<LIMBS>) -> bool {
+        let mut i = 0;
+        while i < LIMBS {
+            if uint.limbs()[i].0 != 0 {
+                return true;
+            }
+            i += 1;
+        }
+        false
+    }
+
+    #[inline(always)]
+    const fn uint_is_gt_vartime<const LIMBS: usize>(lhs: &UInt<LIMBS>, rhs: &UInt<LIMBS>) -> bool {
+        let mut i = LIMBS - 1;
+        loop {
+            if lhs.limbs()[i].0 > rhs.limbs()[i].0 {
+                return true;
+            }
+            if lhs.limbs()[i].0 != rhs.limbs()[i].0 {
+                return false;
+            }
+            if i == 0 {
+                break;
+            }
+            i -= 1;
+        }
+        false
+    }
+
+    while uint_is_nonzero_vartime(&v) {
+        if u.limbs()[0].0 & 1 == 0 {
+            u = u.shr_vartime(1);
+            s = s.shl_vartime(1);
+        } else if v.limbs()[0].0 & 1 == 0 {
+            v = v.shr_vartime(1);
+            r = r.shl_vartime(1);
+        } else if uint_is_gt_vartime(&u, &v) {
+            u = u.saturating_sub(&v).shr_vartime(1);
+            r = r.saturating_add(&s);
+            s = s.shl_vartime(1);
+        } else {
+            v = v.saturating_sub(&u).shr_vartime(1);
+            s = s.saturating_add(&r);
+            r = r.shl_vartime(1);
+        }
+        k += 1;
+    }
+    if k == 0 {
+        return None;
+    }
+
+    r = modulus.saturating_sub(&uint_try_sub(&r, &modulus));
+
+    if k != n {
+        let exp = UInt::ONE.shl_vartime(2 * n - k);
+        r = uint_mul_mod(&r, &exp, modulus, inv);
+    }
+
+    Some(uint_mul_mod(&r, r2, modulus, inv))
 }
 
 /// Returns `c = a.zip(b).fold(0, |acc, (a_i, b_i)| acc + a_i * b_i)`.
