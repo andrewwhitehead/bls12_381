@@ -32,6 +32,7 @@ pub struct G1Affine {
 }
 
 impl Default for G1Affine {
+    #[inline(always)]
     fn default() -> G1Affine {
         G1Affine::identity()
     }
@@ -47,29 +48,27 @@ impl fmt::Display for G1Affine {
 }
 
 impl<'a> From<&'a G1Projective> for G1Affine {
+    #[inline]
     fn from(p: &'a G1Projective) -> G1Affine {
-        let zinv = p.z.invert().unwrap_or(Fp::zero());
-        let x = p.x * zinv;
-        let y = p.y * zinv;
-
-        let tmp = G1Affine {
-            x,
-            y,
-            infinity: 0u8,
-        };
-
-        G1Affine::conditional_select(&tmp, &G1Affine::identity(), zinv.is_zero())
+        p.z.invert()
+            .map(|zinv| G1Affine {
+                x: p.x * zinv,
+                y: p.y * zinv,
+                infinity: 0u8,
+            })
+            .unwrap_or(G1Affine::identity())
     }
 }
 
 impl From<G1Projective> for G1Affine {
+    #[inline(always)]
     fn from(p: G1Projective) -> G1Affine {
         G1Affine::from(&p)
     }
 }
 
 impl ConstantTimeEq for G1Affine {
-    #[inline]
+    #[inline(always)]
     fn ct_eq(&self, other: &Self) -> Choice {
         // The only cases in which two points are equal are
         // 1. infinity is set on both
@@ -78,11 +77,12 @@ impl ConstantTimeEq for G1Affine {
         let other_ident = other.is_identity();
 
         (is_ident & other_ident)
-            | ((!is_ident) & (!other_ident) & self.x.ct_eq(&other.x) & self.y.ct_eq(&other.y))
+            | (!(is_ident | other_ident) & self.x.ct_eq(&other.x) & self.y.ct_eq(&other.y))
     }
 }
 
 impl ConditionallySelectable for G1Affine {
+    #[inline(always)]
     fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
         G1Affine {
             x: Fp::conditional_select(&a.x, &b.x, choice),
@@ -180,6 +180,7 @@ const B: Fp = Fp::from_raw_unchecked([
 
 impl G1Affine {
     /// Returns the identity of the group: the point at infinity.
+    #[inline(always)]
     pub const fn identity() -> G1Affine {
         G1Affine {
             x: Fp::zero(),
@@ -190,6 +191,7 @@ impl G1Affine {
 
     /// Returns a fixed generator of the group. See [`notes::design`](notes/design/index.html#fixed-generators)
     /// for how this generator is chosen.
+    #[inline(always)]
     pub const fn generator() -> G1Affine {
         G1Affine {
             x: Fp::from_raw_unchecked([
@@ -411,8 +413,10 @@ impl G1Affine {
 
     /// Returns true if this point is on the curve. This should always return
     /// true unless an "unchecked" API was used.
+    #[inline]
     pub fn is_on_curve(&self) -> Choice {
-        // y^2 - x^3 ?= 4
+        // y^2 - x^3 ?= b
+
         (Fp::sum_of_products(&[self.y, -self.x.square()], &[self.y, self.x])).ct_eq(&B)
             | self.is_identity()
     }
@@ -438,13 +442,15 @@ pub const BETA: Fp = Fp::from_raw_unchecked([
     0x051b_a4ab_241b_6160,
 ]);
 
+#[inline(always)]
 fn endomorphism(p: &G1Affine) -> G1Affine {
     // Endomorphism of the points on the curve.
     // endomorphism_p(x,y) = (BETA * x, y)
     // where BETA is a non-trivial cubic root of unity in Fq.
-    let mut res = *p;
-    res.x *= BETA;
-    res
+    G1Affine {
+        x: p.x * BETA,
+        ..*p
+    }
 }
 
 /// This is an element of $\mathbb{G}_1$ represented in the projective coordinate space.
@@ -457,6 +463,7 @@ pub struct G1Projective {
 }
 
 impl Default for G1Projective {
+    #[inline(always)]
     fn default() -> G1Projective {
         G1Projective::identity()
     }
@@ -472,6 +479,7 @@ impl fmt::Display for G1Projective {
 }
 
 impl<'a> From<&'a G1Affine> for G1Projective {
+    #[inline(always)]
     fn from(p: &'a G1Affine) -> G1Projective {
         G1Projective {
             x: p.x,
@@ -482,28 +490,35 @@ impl<'a> From<&'a G1Affine> for G1Projective {
 }
 
 impl From<G1Affine> for G1Projective {
+    #[inline(always)]
     fn from(p: G1Affine) -> G1Projective {
         G1Projective::from(&p)
     }
 }
 
 impl ConstantTimeEq for G1Projective {
+    #[inline(always)]
     fn ct_eq(&self, other: &Self) -> Choice {
         // Is (xz, yz, z) equal to (x'z', y'z', z') when converted to affine?
-
-        let cmp_x = Fp::sum_of_products(&[self.x, -other.x], &[other.z, self.z]);
-        let cmp_y = Fp::sum_of_products(&[self.y, -other.y], &[other.z, self.z]);
+        let negz = self.z.neg();
+        let cmp_x = Fp::sum_of_products(&[self.x, other.x], &[other.z, negz]);
+        let cmp_y = Fp::sum_of_products(&[self.y, other.y], &[other.z, negz]);
 
         let self_is_zero = self.z.is_zero();
         let other_is_zero = other.z.is_zero();
 
-        (self_is_zero & other_is_zero) // Both point at infinity
-            | ((!self_is_zero) & (!other_is_zero) & cmp_x.is_zero() & cmp_y.is_zero())
-        // Neither point at infinity, coordinates are the same
+        // FIXME can we safely check: Fp::sum_of_products(
+        //      &[self.x + self.y, other.x + other.y],
+        //      &[other.z, -self.z]).is_zero()
+
+        (self_is_zero & other_is_zero) | // Both point at infinity
+            // Neither point at infinity, coordinates are the same
+            (!(self_is_zero | other_is_zero) & cmp_x.is_zero() & cmp_y.is_zero())
     }
 }
 
 impl ConditionallySelectable for G1Projective {
+    #[inline(always)]
     fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
         G1Projective {
             x: Fp::conditional_select(&a.x, &b.x, choice),
@@ -560,6 +575,7 @@ impl<'a, 'b> ops::Sub<&'b G1Projective> for &'a G1Projective {
 impl<'a, 'b> ops::Mul<&'b Scalar> for &'a G1Projective {
     type Output = G1Projective;
 
+    #[inline]
     fn mul(self, other: &'b Scalar) -> Self::Output {
         self.multiply(*other)
     }
@@ -568,6 +584,7 @@ impl<'a, 'b> ops::Mul<&'b Scalar> for &'a G1Projective {
 impl<'a, 'b> ops::Mul<&'b Scalar> for &'a G1Affine {
     type Output = G1Projective;
 
+    #[inline]
     fn mul(self, other: &'b Scalar) -> Self::Output {
         G1Projective::from(self).multiply(*other)
     }
@@ -585,6 +602,7 @@ fn mul_by_3b(a: Fp) -> Fp {
 
 impl G1Projective {
     /// Returns the identity of the group: the point at infinity.
+    #[inline(always)]
     pub const fn identity() -> G1Projective {
         G1Projective {
             x: Fp::zero(),
@@ -595,6 +613,7 @@ impl G1Projective {
 
     /// Returns a fixed generator of the group. See [`notes::design`](notes/design/index.html#fixed-generators)
     /// for how this generator is chosen.
+    #[inline(always)]
     pub const fn generator() -> G1Projective {
         G1Projective {
             x: Fp::from_raw_unchecked([
@@ -618,66 +637,46 @@ impl G1Projective {
     }
 
     /// Computes the doubling of this point.
+    #[inline]
     pub fn double(&self) -> G1Projective {
         // Algorithm 9, https://eprint.iacr.org/2015/1060.pdf
 
         let t0 = self.y.square();
-        let z3 = t0.double().double().double();
-        let t1 = self.y * self.z;
-        let t2 = self.z.square();
-        let t2 = mul_by_3b(t2);
-        let x3 = t2 * z3;
-        let y3 = t0 + t2;
-        let z3 = t1 * z3;
-        let t1 = t2.double();
-        let t2 = t1 + t2;
-        let t0 = t0 - t2;
-        let y3 = t0 * y3;
-        let y3 = x3 + y3;
-        let t1 = self.x * self.y;
-        let x3 = t0 * t1;
-        let x3 = x3.double();
+        let t1 = t0.double().double().double(); // 8y^2
+        let t2 = mul_by_3b(self.z.square()); // 12z^2
+        let t3 = t2.double() + t2; // 36z^2
+        let t4 = t0 - t3; // y^2 - 36z^2
 
-        let tmp = G1Projective {
+        let x3 = t4.double() * self.x * self.y; // 2xy^3 - 72xyz^2
+        let y3 = t0.double() - t2; // 2y^2 - 12z^2
+        let y3 = Fp::sum_of_products(&[y3, t0], &[t3, t0]); // y^4 + 72y^2z^2 - 432z^4
+        let z3 = t1 * self.y * self.z; // 8y^3z
+
+        G1Projective {
             x: x3,
             y: y3,
             z: z3,
-        };
-
-        G1Projective::conditional_select(&tmp, &G1Projective::identity(), self.is_identity())
+        }
     }
 
     /// Adds this point to another point.
+    #[inline]
     pub fn add(&self, rhs: &G1Projective) -> G1Projective {
         // Algorithm 7, https://eprint.iacr.org/2015/1060.pdf
 
         let t0 = self.x * rhs.x;
+        let t0 = t0.double() + t0;
         let t1 = self.y * rhs.y;
-        let t2 = self.z * rhs.z;
-        let t3 = self.x + self.y;
-        let t4 = rhs.x + rhs.y;
-        let t3 = t3 * t4;
-        let t4 = t0 + t1;
-        let t3 = t3 - t4;
-        let t4 = self.y + self.z;
-        let x3 = rhs.y + rhs.z;
-        let t4 = t4 * x3;
-        let x3 = t1 + t2;
-        let t4 = t4 - x3;
-        let x3 = self.x + self.z;
-        let y3 = rhs.x + rhs.z;
-        let x3 = x3 * y3;
-        let y3 = t0 + t2;
-        let y3 = x3 - y3;
-        let x3 = t0.double();
-        let t0 = x3 + t0;
-        let t2 = mul_by_3b(t2);
-        let z3 = t1 + t2;
-        let t1 = t1 - t2;
-        let y3 = mul_by_3b(y3);
-        let x3 = Fp::sum_of_products(&[t3, -t4], &[t1, y3]);
-        let y3 = Fp::sum_of_products(&[t1, y3], &[z3, t0]);
-        let z3 = Fp::sum_of_products(&[z3, t0], &[t4, t3]);
+        let t2 = mul_by_3b(self.z * rhs.z);
+        let t3 = Fp::sum_of_products(&[self.x, self.y], &[rhs.y, rhs.x]);
+        let t4 = Fp::sum_of_products(&[self.y, self.z], &[rhs.z, rhs.y]);
+        let t5 = Fp::sum_of_products(&[self.x, self.z], &[rhs.z, rhs.x]);
+        let t5 = mul_by_3b(t5);
+        let t6 = t1 + t2;
+        let t7 = t1 - t2;
+        let x3 = Fp::sum_of_products(&[t3, -t4], &[t7, t5]);
+        let y3 = Fp::sum_of_products(&[t7, t5], &[t6, t0]);
+        let z3 = Fp::sum_of_products(&[t6, t0], &[t4, t3]);
 
         G1Projective {
             x: x3,
@@ -687,29 +686,22 @@ impl G1Projective {
     }
 
     /// Adds this point to another point in the affine model.
+    #[inline]
     pub fn add_mixed(&self, rhs: &G1Affine) -> G1Projective {
         // Algorithm 8, https://eprint.iacr.org/2015/1060.pdf
 
         let t0 = self.x * rhs.x;
+        let t0 = t0.double() + t0;
         let t1 = self.y * rhs.y;
-        let t3 = rhs.x + rhs.y;
-        let t4 = self.x + self.y;
-        let t3 = t3 * t4;
-        let t4 = t0 + t1;
-        let t3 = t3 - t4;
-        let t4 = rhs.y * self.z;
-        let t4 = t4 + self.y;
-        let y3 = rhs.x * self.z;
-        let y3 = y3 + self.x;
-        let x3 = t0.double();
-        let t0 = x3 + t0;
         let t2 = mul_by_3b(self.z);
-        let z3 = t1 + t2;
-        let t1 = t1 - t2;
-        let y3 = mul_by_3b(y3);
-        let x3 = Fp::sum_of_products(&[t3, -t4], &[t1, y3]);
-        let y3 = Fp::sum_of_products(&[t1, y3], &[z3, t0]);
-        let z3 = Fp::sum_of_products(&[z3, t0], &[t4, t3]);
+        let t3 = Fp::sum_of_products(&[self.x, self.y], &[rhs.y, rhs.x]);
+        let t4 = rhs.y * self.z + self.y;
+        let t5 = mul_by_3b(rhs.x * self.z + self.x);
+        let t6 = t1 + t2;
+        let t7 = t1 - t2;
+        let x3 = Fp::sum_of_products(&[t3, -t4], &[t7, t5]);
+        let y3 = Fp::sum_of_products(&[t7, t5], &[t6, t0]);
+        let z3 = Fp::sum_of_products(&[t6, t0], &[t4, t3]);
 
         let tmp = G1Projective {
             x: x3,
@@ -730,6 +722,7 @@ impl G1Projective {
         }
     }
 
+    #[inline]
     fn multiply(&self, by: Scalar) -> G1Projective {
         let mut acc = G1Projective::identity();
 
@@ -753,6 +746,7 @@ impl G1Projective {
     }
 
     /// Multiply `self` by `crate::BLS_X`, using double and add.
+    #[inline]
     fn mul_by_x(&self) -> G1Projective {
         let mut i = 1u64 << 62;
         let mut acc = *self;
@@ -773,6 +767,7 @@ impl G1Projective {
     /// Multiplies by $(1 - z)$, where $z$ is the parameter of BLS12-381, which
     /// [suffices to clear](https://ia.cr/2019/403) the cofactor and map
     /// elliptic curve points to elements of $\mathbb{G}\_1$.
+    #[inline(always)]
     pub fn clear_cofactor(&self) -> G1Projective {
         self - self.mul_by_x()
     }
@@ -822,12 +817,16 @@ impl G1Projective {
 
     /// Returns true if this point is on the curve. This should always return
     /// true unless an "unchecked" API was used.
+    #[inline]
     pub fn is_on_curve(&self) -> Choice {
         // Y^2 Z = X^3 + b Z^3
-        (self.y.square() * self.z).ct_eq(&Fp::sum_of_products(
-            &[self.x.square(), self.z.square() * self.z],
-            &[self.x, B],
-        )) | self.z.is_zero()
+        let z2 = self.z.double();
+        Fp::sum_of_products(
+            &[(z2 - self.y) * self.z, self.x.square()],
+            &[self.y + z2, self.x],
+        )
+        .is_zero()
+            | self.z.is_zero()
     }
 }
 

@@ -48,6 +48,7 @@ impl fmt::Display for G2Affine {
 }
 
 impl<'a> From<&'a G2Projective> for G2Affine {
+    #[inline]
     fn from(p: &'a G2Projective) -> G2Affine {
         let zinv = p.z.invert().unwrap_or(Fp2::zero());
         let x = p.x * zinv;
@@ -64,6 +65,7 @@ impl<'a> From<&'a G2Projective> for G2Affine {
 }
 
 impl From<G2Projective> for G2Affine {
+    #[inline]
     fn from(p: G2Projective) -> G2Affine {
         G2Affine::from(&p)
     }
@@ -79,7 +81,7 @@ impl ConstantTimeEq for G2Affine {
         let other_ident = other.is_identity();
 
         (is_ident & other_ident)
-            | ((!is_ident) & (!other_ident) & self.x.ct_eq(&other.x) & self.y.ct_eq(&other.y))
+            | (!(is_ident | other_ident) & self.x.ct_eq(&other.x) & self.y.ct_eq(&other.y))
     }
 }
 
@@ -541,18 +543,16 @@ impl ConstantTimeEq for G2Projective {
     fn ct_eq(&self, other: &Self) -> Choice {
         // Is (xz, yz, z) equal to (x'z', y'z', z') when converted to affine?
 
-        let x1 = self.x * other.z;
-        let x2 = other.x * self.z;
-
-        let y1 = self.y * other.z;
-        let y2 = other.y * self.z;
+        let negz = self.z.neg();
+        let cmp_x = Fp2::lin_comb(&self.x, &other.z, &other.x, &negz);
+        let cmp_y = Fp2::lin_comb(&self.y, &other.z, &other.y, &negz);
 
         let self_is_zero = self.z.is_zero();
         let other_is_zero = other.z.is_zero();
 
-        (self_is_zero & other_is_zero) // Both point at infinity
-            | ((!self_is_zero) & (!other_is_zero) & x1.ct_eq(&x2) & y1.ct_eq(&y2))
-        // Neither point at infinity, coordinates are the same
+        (self_is_zero & other_is_zero) | // Both point at infinity
+            // Neither point at infinity, coordinates are the same
+            (!(self_is_zero | other_is_zero) & cmp_x.is_zero() & cmp_y.is_zero())
     }
 }
 
@@ -637,7 +637,8 @@ fn mul_by_3b(x: Fp2) -> Fp2 {
 
 impl G2Projective {
     /// Returns the identity of the group: the point at infinity.
-    pub fn identity() -> G2Projective {
+    #[inline]
+    pub const fn identity() -> G2Projective {
         G2Projective {
             x: Fp2::zero(),
             y: Fp2::one(),
@@ -647,7 +648,8 @@ impl G2Projective {
 
     /// Returns a fixed generator of the group. See [`notes::design`](notes/design/index.html#fixed-generators)
     /// for how this generator is chosen.
-    pub fn generator() -> G2Projective {
+    #[inline]
+    pub const fn generator() -> G2Projective {
         G2Projective {
             x: Fp2 {
                 c0: Fp::from_raw_unchecked([
@@ -690,24 +692,23 @@ impl G2Projective {
     }
 
     /// Computes the doubling of this point.
+    #[inline]
     pub fn double(&self) -> G2Projective {
         // Algorithm 9, https://eprint.iacr.org/2015/1060.pdf
 
         let t0 = self.y.square();
-        let t2 = mul_by_3b(self.z.square());
-        let t3 = t0.double().double().double();
-        let t4 = t0 - (t2.double() + t2);
-        let x3 = (t4 * self.x * self.y).double();
+        let t2 = mul_by_3b(self.z.square()); // 12z^2
+        let t3 = t0.double().double().double(); // 8y^2
+        let t4 = t0 - t2.double() - t2; // 8y^2 - 36z^2
+        let x3 = (t4 * self.x * self.y).double(); // 16xy^3 - 72xyz^2
         let y3 = Fp2::lin_comb(&t2, &t3, &t4, &(t0 + t2));
-        let z3 = t3 * self.y * self.z;
+        let z3 = t3 * self.y * self.z; // 8y^3z
 
-        let tmp = G2Projective {
+        G2Projective {
             x: x3,
             y: y3,
             z: z3,
-        };
-
-        G2Projective::conditional_select(&tmp, &G2Projective::identity(), self.is_identity())
+        }
     }
 
     /// Adds this point to another point.
@@ -717,9 +718,9 @@ impl G2Projective {
         let t0 = self.x * rhs.x;
         let t1 = self.y * rhs.y;
         let t2 = self.z * rhs.z;
-        let t3 = (self.x + self.y) * (rhs.x + rhs.y) - (t0 + t1);
-        let t4 = (self.y + self.z) * (rhs.y + rhs.z) - (t1 + t2);
-        let y3 = (self.x + self.z) * (rhs.x + rhs.z) - (t0 + t2);
+        let t3 = (self.x + self.y) * (rhs.x + rhs.y) - t0 - t1;
+        let t4 = (self.y + self.z) * (rhs.y + rhs.z) - t1 - t2;
+        let y3 = (self.x + self.z) * (rhs.x + rhs.z) - t0 - t2;
         let t0 = t0.double() + t0;
         let t2 = mul_by_3b(t2);
         let z3 = t1 + t2;
@@ -742,7 +743,7 @@ impl G2Projective {
 
         let t0 = self.x * rhs.x;
         let t1 = self.y * rhs.y;
-        let t3 = (rhs.x + rhs.y) * (self.x + self.y) - (t0 + t1);
+        let t3 = (rhs.x + rhs.y) * (self.x + self.y) - t0 - t1;
         let t4 = (rhs.y * self.z) + self.y;
         let y3 = (rhs.x * self.z) + self.x;
         let t0 = t0.double() + t0;
@@ -930,6 +931,7 @@ impl G2Projective {
 
     /// Returns true if this point is on the curve. This should always return
     /// true unless an "unchecked" API was used.
+    #[inline]
     pub fn is_on_curve(&self) -> Choice {
         // Y^2 Z = X^3 + b Z^3
 
@@ -942,6 +944,7 @@ impl G2Projective {
     }
 
     /// Negate the element.
+    #[inline(always)]
     const fn neg(&self) -> Self {
         G2Projective {
             x: self.x,

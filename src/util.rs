@@ -47,7 +47,7 @@ impl<const LIMBS: usize> Montgomery<LIMBS> {
 
     #[inline(always)]
     // The lower bits are multiplied by `R^2`, as normal.
-    // The upper bits are multiplied by `R^2 * 2^256 = R^3`.
+    // The upper bits are multiplied by `R^2 * R = R^3`.
     pub const fn from_canonical_wide(&self, lo: UInt<LIMBS>, hi: UInt<LIMBS>) -> UInt<LIMBS> {
         self.sum_of_products(&[lo, hi], &[self.r2, self.r3])
     }
@@ -73,8 +73,8 @@ impl<const LIMBS: usize> Montgomery<LIMBS> {
 
     #[inline(always)]
     pub const fn add(&self, lhs: &UInt<LIMBS>, rhs: &UInt<LIMBS>) -> UInt<LIMBS> {
-        // Because self + rhs never carries (we assume that both are < q),
-        // this is more efficient than U256::add_mod.
+        // Because self + rhs does not carry (for p or q),
+        // this is more efficient than UInt::add_mod.
         let (sum, _) = lhs.adc(&rhs, Limb::ZERO);
         uint_try_sub(&sum, &self.modulus)
     }

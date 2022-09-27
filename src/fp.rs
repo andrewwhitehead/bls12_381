@@ -53,6 +53,7 @@ impl PartialEq for Fp {
 }
 
 impl ConditionallySelectable for Fp {
+    #[inline]
     fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
         Fp(Inner::conditional_select(&a.0, &b.0, choice))
     }
