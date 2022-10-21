@@ -4,7 +4,7 @@
 use core::fmt;
 use core::ops;
 
-use crypto_bigint::{nlimbs, CheckedSub, Encoding, UInt, Zero, U384};
+use crypto_bigint::{CheckedSub, Encoding, UInt, Zero, U384};
 use rand_core::RngCore;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
@@ -60,7 +60,7 @@ impl ConditionallySelectable for Fp {
 }
 
 /// The field definition with associated helper functions.
-const FIELD: Montgomery<{ nlimbs!(384) }> = Montgomery::new(Inner::from_be_hex(
+const FIELD: Montgomery<{ Inner::LIMBS }> = Montgomery::new(Inner::from_be_hex(
     "1a0111ea397fe69a\
      4b1ba7b6434bacd7\
      64774b84f38512bf\
@@ -154,7 +154,7 @@ impl Fp {
     pub fn from_bytes_wide(bytes: &[u8; 96]) -> Self {
         let lo = Inner::from_le_bytes(bytes[0..48].try_into().unwrap());
         let hi = Inner::from_le_bytes(bytes[48..96].try_into().unwrap());
-        Fp(FIELD.from_canonical_wide(lo, hi))
+        Fp(FIELD.from_canonical_wide(&lo, &hi))
     }
 
     /// Converts from a canonical element represented by a U384.
@@ -285,13 +285,19 @@ impl Fp {
         Fp(FIELD.sub(&self.0, &rhs.0))
     }
 
+    /// Returns `c = a * b + c * d`.
+    #[inline]
+    pub(crate) const fn lin_comb(a: &Self, b: &Self, c: &Self, d: &Self) -> Self {
+        Fp(FIELD.sum_of_products(&[&a.0, &c.0], &[&b.0, &d.0]))
+    }
+
     /// Returns `c = a.zip(b).fold(0, |acc, (a_i, b_i)| acc + a_i * b_i)`.
     #[inline]
-    pub(crate) fn sum_of_products<const T: usize>(a: &[Fp; T], b: &[Fp; T]) -> Fp {
+    pub(crate) fn sum_of_products<const T: usize>(a: &[&Fp; T], b: &[&Fp; T]) -> Fp {
         #[allow(unsafe_code)]
-        let ar = unsafe { &*(a as *const Fp as *const [Inner; T]) };
+        let ar = unsafe { &*(a as *const &Fp as *const [&Inner; T]) };
         #[allow(unsafe_code)]
-        let br = unsafe { &*(b as *const Fp as *const [Inner; T]) };
+        let br = unsafe { &*(b as *const &Fp as *const [&Inner; T]) };
         return Fp(FIELD.sum_of_products(ar, br));
     }
 

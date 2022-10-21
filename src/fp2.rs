@@ -210,7 +210,7 @@ impl Fp2 {
     }
 
     #[inline(always)]
-    pub fn mul(&self, rhs: &Fp2) -> Fp2 {
+    pub const fn mul(&self, rhs: &Fp2) -> Fp2 {
         // F_{p^2} x F_{p^2} multiplication implemented with operand scanning (schoolbook)
         // computes the result as:
         //
@@ -224,16 +224,19 @@ impl Fp2 {
         // Each of these is a "sum of products", which we can compute efficiently.
 
         Fp2 {
-            c0: Fp::sum_of_products(&[self.c0, -self.c1], &[rhs.c0, rhs.c1]),
-            c1: Fp::sum_of_products(&[self.c0, self.c1], &[rhs.c1, rhs.c0]),
+            c0: Fp::lin_comb(&self.c0, &rhs.c0, &self.c1.neg(), &rhs.c1),
+            c1: Fp::lin_comb(&self.c0, &rhs.c1, &self.c1, &rhs.c0),
         }
     }
 
     #[inline(always)]
     pub fn lin_comb(a: &Self, b: &Self, c: &Self, d: &Self) -> Self {
         Fp2 {
-            c0: Fp::sum_of_products(&[a.c0, -a.c1, c.c0, -c.c1], &[b.c0, b.c1, d.c0, d.c1]),
-            c1: Fp::sum_of_products(&[a.c0, a.c1, c.c0, c.c1], &[b.c1, b.c0, d.c1, d.c0]),
+            c0: Fp::sum_of_products(
+                &[&a.c0, &-a.c1, &c.c0, &-c.c1],
+                &[&b.c0, &b.c1, &d.c0, &d.c1],
+            ),
+            c1: Fp::sum_of_products(&[&a.c0, &a.c1, &c.c0, &c.c1], &[&b.c1, &b.c0, &d.c1, &d.c0]),
         }
     }
 

@@ -4,17 +4,13 @@
 use core::fmt;
 use core::ops;
 
-use crypto_bigint::{nlimbs, Encoding, Zero, U256};
-use ff::{Field, PrimeField};
+use crypto_bigint::{Encoding, Zero, U256};
 use rand_core::RngCore;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
-#[cfg(feature = "bits")]
-use ff::{FieldBits, PrimeFieldBits};
+use crate::util::{uint_is_nonzero_vartime, Montgomery};
 
-use crate::util::Montgomery;
-
-type Inner = U256;
+pub(crate) type Inner = U256;
 
 /// Represents an element of the scalar field $\mathbb{F}_q$ of the BLS12-381 elliptic
 /// curve construction.
@@ -43,12 +39,28 @@ impl fmt::Display for Scalar {
 }
 
 impl From<u64> for Scalar {
+    #[inline]
     fn from(val: u64) -> Scalar {
         Scalar::from_canonical(Inner::from_u64(val))
     }
 }
 
+impl From<Inner> for Scalar {
+    #[inline]
+    fn from(value: Inner) -> Scalar {
+        Scalar::from_canonical(value)
+    }
+}
+
+impl From<&Inner> for Scalar {
+    #[inline]
+    fn from(value: &Inner) -> Scalar {
+        Scalar::from_canonical(*value)
+    }
+}
+
 impl ConstantTimeEq for Scalar {
+    #[inline]
     fn ct_eq(&self, other: &Self) -> Choice {
         self.0.ct_eq(&other.0)
     }
@@ -62,13 +74,14 @@ impl PartialEq for Scalar {
 }
 
 impl ConditionallySelectable for Scalar {
+    #[inline]
     fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
         Scalar(Inner::conditional_select(&a.0, &b.0, choice))
     }
 }
 
 /// The field definition with associated helper functions.
-const FIELD: Montgomery<{ nlimbs!(256) }> = Montgomery::new(Inner::from_be_hex(
+pub(crate) const FIELD: Montgomery<{ Inner::LIMBS }> = Montgomery::new(Inner::from_be_hex(
     "73eda753299d7d48\
      3339d80809a1d805\
      53bda402fffe5bfe\
@@ -174,6 +187,18 @@ impl Scalar {
         Scalar(FIELD.one())
     }
 
+    /// Returns true iff this element is zero.
+    #[inline]
+    pub fn is_zero(&self) -> Choice {
+        self.0.is_zero()
+    }
+
+    /// Returns true iff this element is zero.
+    #[inline]
+    pub fn is_zero_vartime(&self) -> bool {
+        !uint_is_nonzero_vartime(&self.0)
+    }
+
     /// Doubles this field element.
     #[inline]
     pub const fn double(&self) -> Scalar {
@@ -185,6 +210,14 @@ impl Scalar {
     pub fn from_bytes(bytes: &[u8; 32]) -> CtOption<Scalar> {
         FIELD
             .try_from_canonical(&Inner::from_le_bytes(*bytes))
+            .map(|s| Scalar(s))
+    }
+
+    /// Attempts to convert a little-endian byte representation of
+    /// a scalar into a `Scalar`, failing if the input is not canonical.
+    pub fn from_bytes_vartime(bytes: &[u8; 32]) -> Option<Scalar> {
+        FIELD
+            .try_from_canonical_vartime(&Inner::from_le_bytes(*bytes))
             .map(|s| Scalar(s))
     }
 
@@ -205,7 +238,7 @@ impl Scalar {
     pub fn from_bytes_wide(bytes: &[u8; 64]) -> Scalar {
         let lo = Inner::from_le_bytes(bytes[0..32].try_into().unwrap());
         let hi = Inner::from_le_bytes(bytes[32..64].try_into().unwrap());
-        Scalar(FIELD.from_canonical_wide(lo, hi))
+        Scalar(FIELD.from_canonical_wide(&lo, &hi))
     }
 
     /// Converts from a canonical scalar represented by a U256.
@@ -217,7 +250,7 @@ impl Scalar {
     /// Turn into canonical form by computing
     /// (a.R) / R = a
     #[inline]
-    pub(crate) const fn to_canonical(&self) -> Inner {
+    pub const fn to_canonical(&self) -> Inner {
         FIELD.to_canonical(&self.0)
     }
 
@@ -261,21 +294,21 @@ impl Scalar {
 
         let w = FIELD.pow_vartime(&self.0, &EXP);
         let mut v = S;
-        let mut x = FIELD.mul(&self.0, &w);
-        let mut b = FIELD.mul(&x, &w);
+        let mut x = FIELD.mul_inline(&self.0, &w);
+        let mut b = FIELD.mul_inline(&x, &w);
 
         // Initialize z as the 2^S root of unity.
         let mut z = ROOT_OF_UNITY;
 
         for max_v in (1..=S).rev() {
             let mut k = 1;
-            let mut tmp = FIELD.square(&b);
+            let mut tmp = FIELD.square_inline(&b);
             let mut j_less_than_v: Choice = 1.into();
 
             for j in 2..max_v {
                 let tmp_is_one = tmp.ct_eq(&FIELD.one());
                 let sel = Inner::conditional_select(&tmp, &z, tmp_is_one);
-                let squared = FIELD.square(&sel);
+                let squared = FIELD.square_inline(&sel);
                 tmp = Inner::conditional_select(&squared, &tmp, tmp_is_one);
                 let new_z = Inner::conditional_select(&z, &squared, tmp_is_one);
                 j_less_than_v &= !j.ct_eq(&v);
@@ -283,14 +316,14 @@ impl Scalar {
                 z = Inner::conditional_select(&z, &new_z, j_less_than_v);
             }
 
-            let result = FIELD.mul(&x, &z);
+            let result = FIELD.mul_inline(&x, &z);
             x = Inner::conditional_select(&result, &x, b.ct_eq(&FIELD.one()));
-            z = FIELD.square(&z);
-            b = FIELD.mul(&b, &z);
+            z = FIELD.square_inline(&z);
+            b = FIELD.mul_inline(&b, &z);
             v = k;
         }
 
-        let xsq = FIELD.square(&x);
+        let xsq = FIELD.square_inline(&x);
         CtOption::new(
             Scalar(x),
             xsq.ct_eq(&self.0), // Only return Some if it's the square root.
@@ -320,13 +353,13 @@ impl Scalar {
     pub fn invert(&self) -> CtOption<Self> {
         #[inline(always)]
         fn mul(n: &Inner, other: &Inner) -> Inner {
-            FIELD.mul(&n, &other)
+            FIELD.mul_inline(&n, &other)
         }
         #[inline(always)]
         fn pow2k(n: &Inner, num_times: usize) -> Inner {
             let mut res = *n;
             for _ in 0..num_times {
-                res = FIELD.square(&res);
+                res = FIELD.square_inline(&res);
             }
             res
         }
@@ -429,6 +462,40 @@ impl Scalar {
         }
     }
 
+    /// Efficiently invert an array of scalars.
+    pub fn batch_invert(batch: &[Self], output: &mut [Self]) {
+        use crypto_bigint::{Limb, Word};
+        // use high bit to store skip flag
+        const SKIP_WORD: Word = 1 << (Limb::BIT_SIZE - 1);
+        const SKIP: Inner = {
+            let mut s = [Limb::ZERO; Inner::LIMBS];
+            s[Inner::LIMBS - 1].0 = SKIP_WORD;
+            Inner::new(s)
+        };
+        let mut acc = Scalar::one();
+        for (a, b) in batch.iter().zip(output.iter_mut()) {
+            let skip = a.is_zero();
+            b.0 = Inner::conditional_select(&acc.0, &SKIP, skip);
+            acc *= Scalar::conditional_select(&a, &Scalar::one(), skip);
+        }
+        acc = acc.invert().unwrap();
+        for (a, b) in batch.iter().zip(output.iter_mut()).rev() {
+            let hi_word = b.0.limbs()[Inner::LIMBS - 1].0;
+            let skip = Choice::from((hi_word >> (Word::BITS - 1)) as u8);
+            b.0.limbs_mut()[Inner::LIMBS - 1].0 = hi_word & !SKIP_WORD;
+            *b *= acc;
+            acc *= Scalar::conditional_select(&a, &Scalar::one(), skip);
+        }
+    }
+
+    /// Efficiently invert an array of scalars in-place.
+    #[cfg(feature = "alloc")]
+    #[inline]
+    pub fn batch_invert_in_place(batch: &mut [Self]) {
+        let inputs = alloc::vec::Vec::from_iter(batch.iter().copied());
+        Self::batch_invert(&inputs, batch)
+    }
+
     /// Multiplies `rhs` by `self`, returning the result.
     #[inline]
     pub const fn mul(&self, rhs: &Self) -> Self {
@@ -458,17 +525,12 @@ impl Scalar {
     pub const fn bit(&self, index: usize) -> u8 {
         self.0.bit_vartime(index) as u8
     }
-}
 
-impl From<Inner> for Scalar {
-    fn from(value: Inner) -> Scalar {
-        Scalar::from_canonical(value)
-    }
-}
-
-impl From<&Inner> for Scalar {
-    fn from(value: &Inner) -> Scalar {
-        Scalar::from_canonical(*value)
+    /// Generate a random scalar.
+    pub fn random(mut rng: impl RngCore) -> Self {
+        let mut buf = [0; 64];
+        rng.fill_bytes(&mut buf);
+        Self::from_bytes_wide(&buf)
     }
 }
 
@@ -484,11 +546,9 @@ impl<'a> From<&Scalar> for [u8; 32] {
     }
 }
 
-impl Field for Scalar {
-    fn random(mut rng: impl RngCore) -> Self {
-        let mut buf = [0; 64];
-        rng.fill_bytes(&mut buf);
-        Self::from_bytes_wide(&buf)
+impl ff::Field for Scalar {
+    fn random(rng: impl RngCore) -> Self {
+        Self::random(rng)
     }
 
     fn zero() -> Self {
@@ -497,6 +557,14 @@ impl Field for Scalar {
 
     fn one() -> Self {
         Self::one()
+    }
+
+    fn is_zero(&self) -> Choice {
+        self.is_zero()
+    }
+
+    fn is_zero_vartime(&self) -> bool {
+        self.is_zero_vartime()
     }
 
     #[must_use]
@@ -518,7 +586,7 @@ impl Field for Scalar {
     }
 }
 
-impl PrimeField for Scalar {
+impl ff::PrimeField for Scalar {
     type Repr = [u8; 32];
 
     fn from_repr(r: Self::Repr) -> CtOption<Self> {
@@ -533,7 +601,7 @@ impl PrimeField for Scalar {
         Choice::from(self.to_bytes()[0] & 1)
     }
 
-    const NUM_BITS: u32 = FIELD.modulus.bits() as u32;
+    const NUM_BITS: u32 = FIELD.modulus.bits_vartime() as u32;
     const CAPACITY: u32 = Self::NUM_BITS - 1;
 
     fn multiplicative_generator() -> Self {
@@ -554,15 +622,15 @@ type ReprBits = [u32; 8];
 type ReprBits = [u64; 4];
 
 #[cfg(feature = "bits")]
-impl PrimeFieldBits for Scalar {
+impl ff::PrimeFieldBits for Scalar {
     type ReprBits = ReprBits;
 
-    fn to_le_bits(&self) -> FieldBits<Self::ReprBits> {
-        FieldBits::new(self.to_canonical().to_words())
+    fn to_le_bits(&self) -> ff::FieldBits<Self::ReprBits> {
+        ff::FieldBits::new(self.to_canonical().to_words())
     }
 
-    fn char_le_bits() -> FieldBits<Self::ReprBits> {
-        FieldBits::new(FIELD.modulus.to_words())
+    fn char_le_bits() -> ff::FieldBits<Self::ReprBits> {
+        ff::FieldBits::new(FIELD.modulus.to_words())
     }
 }
 
@@ -949,6 +1017,28 @@ fn test_inversion() {
         assert_eq!(tmp2, Scalar::one());
 
         tmp += Scalar(FIELD.r2);
+    }
+}
+
+#[test]
+fn test_batch_inversion() {
+    let a = Scalar::from_raw_unchecked([1, 2, 3, 4]);
+    let ai = a.invert().unwrap();
+    let b = Scalar::from_raw_unchecked([5, 6, 7, 8]);
+    let bi = b.invert().unwrap();
+    let tests = &[(
+        vec![a, b, Scalar::one(), Scalar::zero()],
+        vec![ai, bi, Scalar::one(), Scalar::zero()],
+    )];
+
+    for (batch, expect) in tests {
+        let mut out = vec![Scalar::zero(); batch.len()];
+        Scalar::batch_invert(&batch, &mut out);
+        assert_eq!(&out, expect);
+
+        let mut out = batch.clone();
+        Scalar::batch_invert_in_place(&mut out);
+        assert_eq!(&out, expect);
     }
 }
 

@@ -233,7 +233,7 @@ impl Fp12 {
     #[inline]
     pub fn square(&self) -> Self {
         let ab = self.c0 * self.c1;
-        let c0 = self.c1.mul_by_nonresidue() + self.c0;
+        let c0 = self.c0 + self.c1.mul_by_nonresidue();
         let c0 = c0 * (self.c0 + self.c1);
         let c0 = c0 - (ab + ab.mul_by_nonresidue());
         let c1 = ab.double();

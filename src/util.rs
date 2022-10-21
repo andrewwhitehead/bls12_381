@@ -2,7 +2,7 @@ use crypto_bigint::{Limb, UInt};
 use subtle::{Choice, ConditionallySelectable, CtOption};
 
 /// A helper implementing operations on elements in Mongomery form.
-pub struct Montgomery<const LIMBS: usize> {
+pub(crate) struct Montgomery<const LIMBS: usize> {
     pub modulus: UInt<LIMBS>,
     /// INV = -(q^{-1} mod 2^(Limb::BYTE_SIZE)) mod 2^(Limb::BYTE_SIZE)
     pub inv: Limb,
@@ -48,8 +48,8 @@ impl<const LIMBS: usize> Montgomery<LIMBS> {
     #[inline(always)]
     // The lower bits are multiplied by `R^2`, as normal.
     // The upper bits are multiplied by `R^2 * R = R^3`.
-    pub const fn from_canonical_wide(&self, lo: UInt<LIMBS>, hi: UInt<LIMBS>) -> UInt<LIMBS> {
-        self.sum_of_products(&[lo, hi], &[self.r2, self.r3])
+    pub const fn from_canonical_wide(&self, lo: &UInt<LIMBS>, hi: &UInt<LIMBS>) -> UInt<LIMBS> {
+        self.sum_of_products(&[lo, hi], &[&self.r2, &self.r3])
     }
 
     #[inline(always)]
@@ -67,8 +67,17 @@ impl<const LIMBS: usize> Montgomery<LIMBS> {
     }
 
     #[inline(always)]
+    pub fn try_from_canonical_vartime(&self, uint: &UInt<LIMBS>) -> Option<UInt<LIMBS>> {
+        if uint_is_gt_vartime(&self.modulus, &uint) {
+            Some(self.from_canonical(uint))
+        } else {
+            None
+        }
+    }
+
+    #[inline(always)]
     pub const fn reduce(&self, uint: &UInt<LIMBS>) -> UInt<LIMBS> {
-        uint_montgomery_reduce(*uint, UInt::ZERO, &self.modulus, self.inv)
+        uint_montgomery_reduce(uint, &UInt::ZERO, &self.modulus, self.inv)
     }
 
     #[inline(always)]
@@ -101,8 +110,18 @@ impl<const LIMBS: usize> Montgomery<LIMBS> {
     }
 
     #[inline(always)]
+    pub const fn mul_inline(&self, lhs: &UInt<LIMBS>, rhs: &UInt<LIMBS>) -> UInt<LIMBS> {
+        uint_mul_mod_inline(&lhs, &rhs, &self.modulus, self.inv)
+    }
+
+    #[inline(always)]
     pub const fn square(&self, uint: &UInt<LIMBS>) -> UInt<LIMBS> {
         uint_square_mod(&uint, &self.modulus, self.inv)
+    }
+
+    #[inline(always)]
+    pub const fn square_inline(&self, uint: &UInt<LIMBS>) -> UInt<LIMBS> {
+        uint_mul_mod_inline(&uint, &uint, &self.modulus, self.inv)
     }
 
     #[inline(always)]
@@ -125,11 +144,7 @@ impl<const LIMBS: usize> Montgomery<LIMBS> {
     }
 
     #[inline(always)]
-    pub const fn sum_of_products<const T: usize>(
-        &self,
-        a: &[UInt<LIMBS>; T],
-        b: &[UInt<LIMBS>; T],
-    ) -> UInt<LIMBS> {
+    pub const fn sum_of_products(&self, a: &[&UInt<LIMBS>], b: &[&UInt<LIMBS>]) -> UInt<LIMBS> {
         uint_sum_of_products_mod(a, b, &self.modulus, self.inv)
     }
 }
@@ -163,8 +178,8 @@ const fn uint_reduction_inv<const LIMBS: usize>(modulus: &UInt<LIMBS>) -> Limb {
 /// <http://cacr.uwaterloo.ca/hac/about/chap14.pdf>.
 #[inline(always)]
 pub const fn uint_montgomery_reduce<const LIMBS: usize>(
-    lo: UInt<LIMBS>,
-    hi: UInt<LIMBS>,
+    lo: &UInt<LIMBS>,
+    hi: &UInt<LIMBS>,
     modulus: &UInt<LIMBS>,
     inv: Limb,
 ) -> UInt<LIMBS> {
@@ -199,32 +214,107 @@ pub const fn uint_montgomery_reduce<const LIMBS: usize>(
 }
 
 /// Multiplies two elements mod q, interleaving the reduction steps.
-#[inline(always)]
 pub const fn uint_mul_mod<const LIMBS: usize>(
     lhs: &UInt<LIMBS>,
     rhs: &UInt<LIMBS>,
     modulus: &UInt<LIMBS>,
     inv: Limb,
 ) -> UInt<LIMBS> {
-    uint_sum_of_products_mod(&[*lhs], &[*rhs], modulus, inv)
+    uint_mul_mod_inline(lhs, rhs, modulus, inv)
+}
+
+/// Multiplies two elements mod q, interleaving the reduction steps.
+#[inline(always)]
+pub const fn uint_mul_mod_inline<const LIMBS: usize>(
+    lhs: &UInt<LIMBS>,
+    rhs: &UInt<LIMBS>,
+    modulus: &UInt<LIMBS>,
+    inv: Limb,
+) -> UInt<LIMBS> {
+    uint_sum_of_products_mod_inline(&[lhs], &[rhs], modulus, inv)
 }
 
 /// Squares an element mod q.
-#[inline(always)]
 pub const fn uint_square_mod<const LIMBS: usize>(
     uint: &UInt<LIMBS>,
     modulus: &UInt<LIMBS>,
     inv: Limb,
 ) -> UInt<LIMBS> {
-    let uint = [*uint];
-    uint_sum_of_products_mod(&uint, &uint, modulus, inv)
+    let limbs = uint.limbs();
+    let mut lo = [Limb::ZERO; LIMBS];
+    let mut hi = [Limb::ZERO; LIMBS];
+    let mut i = 0;
+    while i < LIMBS - 1 {
+        let mut j = i;
+        let mut carry = Limb::ZERO;
+
+        while j < LIMBS - 1 {
+            let k = i + j;
+            if k >= LIMBS {
+                let (n, c) = hi[k - LIMBS].mac(limbs[i], limbs[j + 1], carry);
+                hi[k - LIMBS] = n;
+                carry = c;
+            } else {
+                let (n, c) = lo[k].mac(limbs[i], limbs[j + 1], carry);
+                lo[k] = n;
+                carry = c;
+            }
+            j += 1;
+        }
+
+        if i == 0 {
+            lo[LIMBS - 1] = carry;
+        } else {
+            hi[i - 1] = carry;
+        }
+        i += 1;
+    }
+
+    // Shift [hi || lo] to the left
+    // (Slightly complicated by Limb not implementing shl)
+    hi[LIMBS - 1] = Limb(hi[LIMBS - 2].0 >> (Limb::BIT_SIZE - 1));
+    let mut i = LIMBS - 2;
+    while i > 0 {
+        hi[i] = Limb((hi[i].0 << 1) | (hi[i - 1].0 >> (Limb::BIT_SIZE - 1)));
+        i -= 1;
+    }
+    hi[0] = Limb((hi[0].0 << 1) | (lo[LIMBS - 1].0 >> (Limb::BIT_SIZE - 1)));
+    let mut i = LIMBS - 1;
+    while i > 0 {
+        lo[i] = Limb((lo[i].0 << 1) | (lo[i - 1].0 >> (Limb::BIT_SIZE - 1)));
+        i -= 1;
+    }
+    lo[0] = Limb(lo[0].0 << 1);
+
+    let mut i = 0;
+    let mut base = Limb::ZERO;
+    let mut carry = Limb::ZERO;
+    while i < LIMBS {
+        let (l1, c) = base.mac(limbs[i], limbs[i], carry);
+        let k = i * 2;
+        if k >= LIMBS {
+            let (l2, c) = hi[k - LIMBS].adc(Limb::ZERO, c);
+            hi[k - LIMBS] = l1;
+            base = hi[k - LIMBS + 1];
+            hi[k - LIMBS + 1] = l2;
+            carry = c;
+        } else {
+            let (l2, c) = lo[k].adc(Limb::ZERO, c);
+            lo[k] = l1;
+            base = lo[k + 1];
+            lo[k + 1] = l2;
+            carry = c;
+        };
+        i += 1;
+    }
+
+    uint_montgomery_reduce(&UInt::new(lo), &UInt::new(hi), modulus, inv)
 }
 
 /// Calculates `uint^by mod q` in constant time.
 ///
 /// Based on Algorithm 14.94 in Handbook of Applied Cryptography
 /// <http://cacr.uwaterloo.ca/hac/about/chap14.pdf>.
-#[inline(always)]
 pub fn uint_pow_mod<const LIMBS: usize, const T: usize>(
     uint: &UInt<LIMBS>,
     by: &UInt<T>,
@@ -233,28 +323,12 @@ pub fn uint_pow_mod<const LIMBS: usize, const T: usize>(
     inv: Limb,
 ) -> UInt<LIMBS> {
     let mut res = *r;
-    let mut i = T - 1;
+    let mut i = LIMBS * Limb::BIT_SIZE - 1;
     loop {
-        let wd = by.as_words()[i];
-        let mut j = Limb::BIT_SIZE - 1;
-        let mut square = true;
-        loop {
-            let rhs;
-            if square {
-                rhs = res;
-            } else {
-                let add = Choice::from(((wd >> j) & 1) as u8);
-                rhs = UInt::conditional_select(&r, &uint, add);
-            }
-            res = uint_mul_mod(&res, &rhs, modulus, inv);
-            if !square {
-                if j == 0 {
-                    break;
-                }
-                j -= 1;
-            }
-            square = !square;
-        }
+        res = uint_mul_mod_inline(&res, &res, modulus, inv);
+        let add = Choice::from(by.bit_vartime(i) as u8);
+        let rhs = UInt::conditional_select(&r, &uint, add);
+        res = uint_mul_mod_inline(&res, &rhs, modulus, inv);
         if i == 0 {
             break;
         }
@@ -267,7 +341,6 @@ pub fn uint_pow_mod<const LIMBS: usize, const T: usize>(
 /// respect to the exponent.
 /// Based on Algorithm 14.94 in Handbook of Applied Cryptography
 /// <http://cacr.uwaterloo.ca/hac/about/chap14.pdf>.
-#[inline(always)]
 pub const fn uint_pow_vartime_mod<const LIMBS: usize, const T: usize>(
     uint: &UInt<LIMBS>,
     by: &UInt<T>,
@@ -276,31 +349,11 @@ pub const fn uint_pow_vartime_mod<const LIMBS: usize, const T: usize>(
     inv: Limb,
 ) -> UInt<LIMBS> {
     let mut res = *r;
-    let mut i = T - 1;
+    let mut i = LIMBS * Limb::BIT_SIZE - 1;
     loop {
-        let wd = by.as_words()[i];
-        let mut j = Limb::BIT_SIZE - 1;
-        let mut square = true;
-        loop {
-            let rhs;
-            let skip;
-            if square {
-                rhs = &res;
-                skip = false;
-            } else {
-                rhs = &uint;
-                skip = (wd >> j) & 1 == 0;
-            }
-            if !skip {
-                res = uint_mul_mod(&res, rhs, modulus, inv);
-            }
-            if !square {
-                if j == 0 {
-                    break;
-                }
-                j -= 1;
-            }
-            square = !square;
+        res = uint_mul_mod_inline(&res, &res, modulus, inv);
+        if by.bit_vartime(i) != 0 {
+            res = uint_mul_mod_inline(&res, &uint, modulus, inv);
         }
         if i == 0 {
             break;
@@ -329,36 +382,6 @@ pub const fn uint_invert_vartime_mod<const LIMBS: usize>(
     let mut s = UInt::ONE;
     let mut k = 0;
 
-    #[inline(always)]
-    const fn uint_is_nonzero_vartime<const LIMBS: usize>(uint: &UInt<LIMBS>) -> bool {
-        let mut i = 0;
-        while i < LIMBS {
-            if uint.limbs()[i].0 != 0 {
-                return true;
-            }
-            i += 1;
-        }
-        false
-    }
-
-    #[inline(always)]
-    const fn uint_is_gt_vartime<const LIMBS: usize>(lhs: &UInt<LIMBS>, rhs: &UInt<LIMBS>) -> bool {
-        let mut i = LIMBS - 1;
-        loop {
-            if lhs.limbs()[i].0 > rhs.limbs()[i].0 {
-                return true;
-            }
-            if lhs.limbs()[i].0 != rhs.limbs()[i].0 {
-                return false;
-            }
-            if i == 0 {
-                break;
-            }
-            i -= 1;
-        }
-        false
-    }
-
     while uint_is_nonzero_vartime(&v) {
         if u.limbs()[0].0 & 1 == 0 {
             u = u.shr_vartime(1);
@@ -385,10 +408,20 @@ pub const fn uint_invert_vartime_mod<const LIMBS: usize>(
 
     if k != n {
         let exp = UInt::ONE.shl_vartime(2 * n - k);
-        r = uint_mul_mod(&r, &exp, modulus, inv);
+        r = uint_mul_mod_inline(&r, &exp, modulus, inv);
     }
 
-    Some(uint_mul_mod(&r, r2, modulus, inv))
+    Some(uint_mul_mod_inline(&r, r2, modulus, inv))
+}
+
+/// Returns `c = a.zip(b).fold(0, |acc, (a_i, b_i)| acc + a_i * b_i)`.
+pub const fn uint_sum_of_products_mod<const LIMBS: usize>(
+    a: &[&UInt<LIMBS>],
+    b: &[&UInt<LIMBS>],
+    modulus: &UInt<LIMBS>,
+    inv: Limb,
+) -> UInt<LIMBS> {
+    uint_sum_of_products_mod_inline(a, b, modulus, inv)
 }
 
 /// Returns `c = a.zip(b).fold(0, |acc, (a_i, b_i)| acc + a_i * b_i)`.
@@ -397,9 +430,9 @@ pub const fn uint_invert_vartime_mod<const LIMBS: usize>(
 /// [ePrint 2022-367](https://eprint.iacr.org/2022/367) §3.
 /// Elements of a and b are not required to be < q.
 #[inline(always)]
-pub const fn uint_sum_of_products_mod<const LIMBS: usize, const T: usize>(
-    a: &[UInt<LIMBS>; T],
-    b: &[UInt<LIMBS>; T],
+pub const fn uint_sum_of_products_mod_inline<const LIMBS: usize>(
+    a: &[&UInt<LIMBS>],
+    b: &[&UInt<LIMBS>],
     modulus: &UInt<LIMBS>,
     inv: Limb,
 ) -> UInt<LIMBS> {
@@ -418,6 +451,9 @@ pub const fn uint_sum_of_products_mod<const LIMBS: usize, const T: usize>(
     //   need to store a single extra limb overall, instead of keeping around all the
     //   intermediate results and eventually having twice as many limbs.
 
+    let len = a.len();
+    assert!(len == b.len());
+
     let mod_limbs = modulus.limbs();
     let mut limbs = [Limb::ZERO; LIMBS];
     let mut i = 0;
@@ -426,7 +462,7 @@ pub const fn uint_sum_of_products_mod<const LIMBS: usize, const T: usize>(
         let mut carry = Limb::ZERO;
         let mut j1 = 0;
 
-        while j1 < T {
+        while j1 < len {
             let al = a[j1].limbs();
             let bl = b[j1].limbs();
             let mut carry2 = Limb::ZERO;
@@ -481,6 +517,53 @@ pub const fn uint_try_sub<const LIMBS: usize>(lhs: &UInt<LIMBS>, rhs: &UInt<LIMB
     }
 
     UInt::from_words(res)
+}
+
+#[inline(always)]
+pub(crate) const fn uint_is_nonzero_vartime<const LIMBS: usize>(uint: &UInt<LIMBS>) -> bool {
+    let mut i = 0;
+    while i < LIMBS {
+        if uint.limbs()[i].0 != 0 {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+#[inline(always)]
+const fn uint_is_gt_vartime<const LIMBS: usize>(lhs: &UInt<LIMBS>, rhs: &UInt<LIMBS>) -> bool {
+    let mut i = LIMBS - 1;
+    loop {
+        if lhs.limbs()[i].0 > rhs.limbs()[i].0 {
+            return true;
+        }
+        if lhs.limbs()[i].0 != rhs.limbs()[i].0 {
+            return false;
+        }
+        if i == 0 {
+            break;
+        }
+        i -= 1;
+    }
+    false
+}
+
+#[inline(always)]
+pub(crate) fn ct_select_table<T: Copy + ConditionallySelectable, const LEN: usize>(
+    table: &[T; LEN],
+    index: usize,
+) -> T {
+    assert!(LEN > 0);
+    let mut i = 1;
+    let mut res = table[0];
+    while i < LEN {
+        let cmp = (index ^ i) as isize;
+        let sel = !((cmp | cmp.saturating_neg()) >> (isize::BITS - 1));
+        res = T::conditional_select(&res, &table[i], Choice::from((sel & 1) as u8));
+        i += 1;
+    }
+    res
 }
 
 macro_rules! impl_add_binop_specify_output {

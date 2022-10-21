@@ -178,11 +178,11 @@ impl Fp6 {
     }
 
     #[inline]
-    pub fn mul_by_1(&self, c1: &Fp2) -> Fp6 {
+    pub const fn mul_by_1(&self, c1: &Fp2) -> Fp6 {
         Fp6 {
-            c0: (self.c2 * c1).mul_by_nonresidue(),
-            c1: self.c0 * c1,
-            c2: self.c1 * c1,
+            c0: self.c2.mul(&c1).mul_by_nonresidue(),
+            c1: self.c0.mul(&c1),
+            c2: self.c1.mul(&c1),
         }
     }
 
@@ -322,52 +322,60 @@ impl Fp6 {
             c0: Fp2 {
                 c0: Fp::sum_of_products(
                     &[
-                        a.c0.c0,
-                        neg_a_c1[0],
-                        a.c1.c0,
-                        neg_a_c1[1],
-                        a.c2.c0,
-                        neg_a_c1[2],
+                        &a.c0.c0,
+                        &neg_a_c1[0],
+                        &a.c1.c0,
+                        &neg_a_c1[1],
+                        &a.c2.c0,
+                        &neg_a_c1[2],
                     ],
-                    &[b.c0.c0, b.c0.c1, b20_m_b21, b20_p_b21, b10_m_b11, b10_p_b11],
+                    &[
+                        &b.c0.c0, &b.c0.c1, &b20_m_b21, &b20_p_b21, &b10_m_b11, &b10_p_b11,
+                    ],
                 ),
                 c1: Fp::sum_of_products(
-                    &[a.c0.c0, a.c0.c1, a.c1.c0, a.c1.c1, a.c2.c0, a.c2.c1],
-                    &[b.c0.c1, b.c0.c0, b20_p_b21, b20_m_b21, b10_p_b11, b10_m_b11],
+                    &[&a.c0.c0, &a.c0.c1, &a.c1.c0, &a.c1.c1, &a.c2.c0, &a.c2.c1],
+                    &[
+                        &b.c0.c1, &b.c0.c0, &b20_p_b21, &b20_m_b21, &b10_p_b11, &b10_m_b11,
+                    ],
                 ),
             },
             c1: Fp2 {
                 c0: Fp::sum_of_products(
                     &[
-                        a.c0.c0,
-                        neg_a_c1[0],
-                        a.c1.c0,
-                        neg_a_c1[1],
-                        a.c2.c0,
-                        neg_a_c1[2],
+                        &a.c0.c0,
+                        &neg_a_c1[0],
+                        &a.c1.c0,
+                        &neg_a_c1[1],
+                        &a.c2.c0,
+                        &neg_a_c1[2],
                     ],
-                    &[b.c1.c0, b.c1.c1, b.c0.c0, b.c0.c1, b20_m_b21, b20_p_b21],
+                    &[
+                        &b.c1.c0, &b.c1.c1, &b.c0.c0, &b.c0.c1, &b20_m_b21, &b20_p_b21,
+                    ],
                 ),
                 c1: Fp::sum_of_products(
-                    &[a.c0.c0, a.c0.c1, a.c1.c0, a.c1.c1, a.c2.c0, a.c2.c1],
-                    &[b.c1.c1, b.c1.c0, b.c0.c1, b.c0.c0, b20_p_b21, b20_m_b21],
+                    &[&a.c0.c0, &a.c0.c1, &a.c1.c0, &a.c1.c1, &a.c2.c0, &a.c2.c1],
+                    &[
+                        &b.c1.c1, &b.c1.c0, &b.c0.c1, &b.c0.c0, &b20_p_b21, &b20_m_b21,
+                    ],
                 ),
             },
             c2: Fp2 {
                 c0: Fp::sum_of_products(
                     &[
-                        a.c0.c0,
-                        neg_a_c1[0],
-                        a.c1.c0,
-                        neg_a_c1[1],
-                        a.c2.c0,
-                        neg_a_c1[2],
+                        &a.c0.c0,
+                        &neg_a_c1[0],
+                        &a.c1.c0,
+                        &neg_a_c1[1],
+                        &a.c2.c0,
+                        &neg_a_c1[2],
                     ],
-                    &[b.c2.c0, b.c2.c1, b.c1.c0, b.c1.c1, b.c0.c0, b.c0.c1],
+                    &[&b.c2.c0, &b.c2.c1, &b.c1.c0, &b.c1.c1, &b.c0.c0, &b.c0.c1],
                 ),
                 c1: Fp::sum_of_products(
-                    &[a.c0.c0, a.c0.c1, a.c1.c0, a.c1.c1, a.c2.c0, a.c2.c1],
-                    &[b.c2.c1, b.c2.c0, b.c1.c1, b.c1.c0, b.c0.c1, b.c0.c0],
+                    &[&a.c0.c0, &a.c0.c1, &a.c1.c0, &a.c1.c1, &a.c2.c0, &a.c2.c1],
+                    &[&b.c2.c1, &b.c2.c0, &b.c1.c1, &b.c1.c0, &b.c0.c1, &b.c0.c0],
                 ),
             },
         }
