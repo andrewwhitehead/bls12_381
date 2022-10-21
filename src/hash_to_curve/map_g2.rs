@@ -394,13 +394,18 @@ fn map_to_curve_simple_swu(u: &Fp2) -> G2Projective {
     let xisq_u4 = xi_usq.square();
     let nd_common = xisq_u4 + xi_usq; // XI^2 * u^4 + XI * u^2
     let x_den = SSWU_ELLP_A * Fp2::conditional_select(&(-nd_common), &SSWU_XI, nd_common.is_zero());
-    let x0_num = SSWU_ELLP_B * (Fp2::one() + nd_common); // B * (1 + (XI^2 * u^4 + XI * u^2))
+    let x0_num = SSWU_ELLP_B + SSWU_ELLP_B * nd_common; // B * (1 + (XI^2 * u^4 + XI * u^2))
 
     // compute g(x0(u))
     let x_densq = x_den.square();
     let gx_den = x_densq * x_den;
     // x0_num^3 + A * x0_num * x_den^2 + B * x_den^3
-    let gx0_num = (x0_num.square() + SSWU_ELLP_A * x_densq) * x0_num + SSWU_ELLP_B * gx_den;
+    let gx0_num = Fp2::lin_comb(
+        &(x0_num.square() + SSWU_ELLP_A * x_densq),
+        &x0_num,
+        &SSWU_ELLP_B,
+        &gx_den,
+    );
 
     // compute g(x0(u)) ^ ((p^2 - 9) // 16)
     let sqrt_candidate = {
@@ -473,7 +478,7 @@ fn iso_map(u: &G2Projective) -> G2Projective {
         let clast = coeff.len() - 1;
         mapvals[idx] = coeff[clast];
         for jdx in 0..clast {
-            mapvals[idx] = mapvals[idx] * x + zpows[jdx] * coeff[clast - 1 - jdx];
+            mapvals[idx] = Fp2::lin_comb(&mapvals[idx], &x, &zpows[jdx], &coeff[clast - 1 - jdx]);
         }
     }
 
