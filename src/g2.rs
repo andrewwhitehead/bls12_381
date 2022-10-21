@@ -4,6 +4,8 @@ use core::borrow::Borrow;
 use core::fmt;
 use core::iter::Sum;
 use core::ops;
+
+use crypto_bigint::{Limb, UInt};
 use group::{
     prime::{PrimeCurve, PrimeCurveAffine, PrimeGroup},
     Curve, Group, GroupEncoding, UncompressedEncoding,
@@ -16,7 +18,9 @@ use group::WnafGroup;
 
 use crate::fp::Fp;
 use crate::fp2::Fp2;
-use crate::Scalar;
+use crate::multiexp::{sum_of_products, sum_of_products_vartime};
+use crate::scalar::Scalar;
+use crate::util::ct_select_table;
 
 /// This is an element of $\mathbb{G}_2$ represented in the affine coordinate space.
 /// It is ideal to keep elements in this representation to reduce memory usage and
@@ -33,6 +37,7 @@ pub struct G2Affine {
 }
 
 impl Default for G2Affine {
+    #[inline]
     fn default() -> G2Affine {
         G2Affine::identity()
     }
@@ -81,11 +86,12 @@ impl ConstantTimeEq for G2Affine {
         let other_ident = other.is_identity();
 
         (is_ident & other_ident)
-            | (!(is_ident | other_ident) & self.x.ct_eq(&other.x) & self.y.ct_eq(&other.y))
+            | (!is_ident & !other_ident & self.x.ct_eq(&other.x) & self.y.ct_eq(&other.y))
     }
 }
 
 impl ConditionallySelectable for G2Affine {
+    #[inline]
     fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
         G2Affine {
             x: Fp2::conditional_select(&a.x, &b.x, choice),
@@ -157,6 +163,24 @@ impl<'a, 'b> ops::Sub<&'b G2Affine> for &'a G2Projective {
     }
 }
 
+impl<'a, 'b> ops::Add<&'b G2Affine> for &'a G2Affine {
+    type Output = G2Projective;
+
+    #[inline]
+    fn add(self, rhs: &'b G2Affine) -> G2Projective {
+        self.add(rhs)
+    }
+}
+
+impl<'a, 'b> ops::Sub<&'b G2Affine> for &'a G2Affine {
+    type Output = G2Projective;
+
+    #[inline]
+    fn sub(self, rhs: &'b G2Affine) -> G2Projective {
+        self + (-rhs)
+    }
+}
+
 impl<T> Sum<T> for G2Projective
 where
     T: Borrow<G2Projective>,
@@ -171,6 +195,7 @@ where
 
 impl_binops_additive!(G2Projective, G2Affine);
 impl_binops_additive_specify_output!(G2Affine, G2Projective, G2Projective);
+impl_binops_additive_specify_output!(G2Affine, G2Affine, G2Projective);
 
 const B: Fp2 = Fp2 {
     c0: Fp::from_raw_unchecked([
@@ -191,10 +216,9 @@ const B: Fp2 = Fp2 {
     ]),
 };
 
-const B3: Fp2 = Fp2::add(&Fp2::add(&B, &B), &B);
-
 impl G2Affine {
     /// Returns the identity of the group: the point at infinity.
+    #[inline]
     pub const fn identity() -> G2Affine {
         G2Affine {
             x: Fp2::zero(),
@@ -205,6 +229,7 @@ impl G2Affine {
 
     /// Returns a fixed generator of the group. See [`notes::design`](notes/design/index.html#fixed-generators)
     /// for how this generator is chosen.
+    #[inline]
     pub const fn generator() -> G2Affine {
         G2Affine {
             x: Fp2 {
@@ -473,6 +498,7 @@ impl G2Affine {
     /// Returns true if this point is free of an $h$-torsion component, and so it
     /// exists within the $q$-order subgroup $\mathbb{G}_2$. This should always return true
     /// unless an "unchecked" API was used.
+    #[inline]
     pub fn is_torsion_free(&self) -> Choice {
         // Algorithm from Section 4 of https://eprint.iacr.org/2021/1130
         // Updated proof of correctness in https://eprint.iacr.org/2022/352
@@ -484,18 +510,70 @@ impl G2Affine {
 
     /// Returns true if this point is on the curve. This should always return
     /// true unless an "unchecked" API was used.
+    #[inline]
     pub fn is_on_curve(&self) -> Choice {
         // y^2 - x^3 ?= 4(u + 1)
         Fp2::lin_comb(&self.y, &self.y, &-self.x.square(), &self.x).ct_eq(&B) | self.is_identity()
     }
 
     /// Negate the element.
+    #[inline(always)]
     const fn neg(&self) -> Self {
         G2Affine {
             x: self.x,
             y: self.y.neg(),
             infinity: self.infinity,
         }
+    }
+
+    /// Computes the doubling of this point.
+    #[inline]
+    pub fn double(&self) -> G2Projective {
+        // Algorithm 9, https://eprint.iacr.org/2015/1060.pdf
+
+        let t0 = self.y.square();
+        let t2 = fp2_mul_by_3b(Fp2::one()); // const
+        let t3 = t0.double().double().double(); // 8y^2
+        let t4 = t0 - t2.double() - t2; // 8y^2 - 9bz^2
+        let x = (t4 * self.x * self.y).double(); // 16xy^3 - 18bxyz^2
+        let y = Fp2::lin_comb(&t2, &t3, &t4, &(t0 + t2)); // 3bz^2*8y^2 + (16xy^3 - 18bxyz^2)*(y^2 + 3bz^2)
+        let z = t3 * self.y; // 8y^3z
+
+        G2Projective { x, y, z }
+    }
+
+    /// Adds this point to another point in the affine model.
+    pub fn add(&self, rhs: &G2Affine) -> G2Projective {
+        // Algorithm 8, https://eprint.iacr.org/2015/1060.pdf
+
+        let t0 = self.x * rhs.x;
+        let t1 = self.y * rhs.y;
+        let t2 = (rhs.x + rhs.y) * (self.x + self.y) - (t0 + t1);
+        let t3 = rhs.y + self.y;
+        let t4 = rhs.x + self.x;
+        let t5 = t0.double() + t0;
+        let t6 = fp2_mul_by_3b(Fp2::one()); // const
+        let t7 = t1 + t6;
+        let t8 = t1 - t6;
+        let t9 = fp2_mul_by_3b(t4);
+        let x = Fp2::lin_comb(&t9, &-t3, &t2, &t8);
+        let y = Fp2::lin_comb(&t9, &t5, &t8, &t7);
+        let z = Fp2::lin_comb(&t7, &t3, &t5, &t2);
+
+        let tmp = G2Projective { x, y, z };
+
+        G2Projective::conditional_select(&tmp, &G2Projective::from(self), rhs.is_identity())
+    }
+
+    /// Calculate a linear combination of points multiplied by scalars.
+    pub fn sum_of_products(points: &[Self], scalars: &[Scalar]) -> G2Projective {
+        sum_of_products(points, scalars)
+    }
+
+    /// Calculate a linear combination of points multiplied by scalars.
+    /// Runs in variable time - for non-secret scalar values only.
+    pub fn sum_of_products_vartime(points: &[Self], scalars: &[Scalar]) -> G2Projective {
+        sum_of_products_vartime(points, scalars)
     }
 }
 
@@ -524,6 +602,7 @@ impl fmt::Display for G2Projective {
 }
 
 impl<'a> From<&'a G2Affine> for G2Projective {
+    #[inline]
     fn from(p: &'a G2Affine) -> G2Projective {
         G2Projective {
             x: p.x,
@@ -534,12 +613,14 @@ impl<'a> From<&'a G2Affine> for G2Projective {
 }
 
 impl From<G2Affine> for G2Projective {
+    #[inline]
     fn from(p: G2Affine) -> G2Projective {
         G2Projective::from(&p)
     }
 }
 
 impl ConstantTimeEq for G2Projective {
+    #[inline]
     fn ct_eq(&self, other: &Self) -> Choice {
         // Is (xz, yz, z) equal to (x'z', y'z', z') when converted to affine?
 
@@ -552,11 +633,12 @@ impl ConstantTimeEq for G2Projective {
 
         (self_is_zero & other_is_zero) | // Both point at infinity
             // Neither point at infinity, coordinates are the same
-            (!(self_is_zero | other_is_zero) & cmp_x.is_zero() & cmp_y.is_zero())
+            (!self_is_zero & !other_is_zero & cmp_x.is_zero() & cmp_y.is_zero())
     }
 }
 
 impl ConditionallySelectable for G2Projective {
+    #[inline]
     fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
         G2Projective {
             x: Fp2::conditional_select(&a.x, &b.x, choice),
@@ -613,16 +695,18 @@ impl<'a, 'b> ops::Sub<&'b G2Projective> for &'a G2Projective {
 impl<'a, 'b> ops::Mul<&'b Scalar> for &'a G2Projective {
     type Output = G2Projective;
 
+    #[inline]
     fn mul(self, other: &'b Scalar) -> Self::Output {
-        self.multiply(&other.to_bytes())
+        self.multiply(&other.to_canonical())
     }
 }
 
 impl<'a, 'b> ops::Mul<&'b Scalar> for &'a G2Affine {
     type Output = G2Projective;
 
+    #[inline]
     fn mul(self, other: &'b Scalar) -> Self::Output {
-        G2Projective::from(self).multiply(&other.to_bytes())
+        G2Projective::from(self).multiply(&other.to_canonical())
     }
 }
 
@@ -631,8 +715,14 @@ impl_binops_multiplicative!(G2Projective, Scalar);
 impl_binops_multiplicative_mixed!(G2Affine, Scalar, G2Projective);
 
 #[inline(always)]
-fn mul_by_3b(x: Fp2) -> Fp2 {
-    x * B3
+pub(crate) fn fp2_mul_by_3b(x: Fp2) -> Fp2 {
+    const B3: Fp2 = B.double().add(&B);
+
+    let x = x.mul_by_nonresidue();
+    Fp2 {
+        c0: B3.c0 * x.c0,
+        c1: B3.c1 * x.c1,
+    }
 }
 
 impl G2Projective {
@@ -697,18 +787,14 @@ impl G2Projective {
         // Algorithm 9, https://eprint.iacr.org/2015/1060.pdf
 
         let t0 = self.y.square();
-        let t2 = mul_by_3b(self.z.square()); // 12z^2
+        let t2 = fp2_mul_by_3b(self.z.square()); // 3bz^2
         let t3 = t0.double().double().double(); // 8y^2
-        let t4 = t0 - t2.double() - t2; // 8y^2 - 36z^2
-        let x3 = (t4 * self.x * self.y).double(); // 16xy^3 - 72xyz^2
-        let y3 = Fp2::lin_comb(&t2, &t3, &t4, &(t0 + t2));
-        let z3 = t3 * self.y * self.z; // 8y^3z
+        let t4 = t0 - t2.double() - t2; // 8y^2 - 9bz^2
+        let x = (t4 * self.x * self.y).double(); // 16xy^3 - 18bxyz^2
+        let y = Fp2::lin_comb(&t2, &t3, &t4, &(t0 + t2)); // 3bz^2*8y^2 + (16xy^3 - 18bxyz^2)*(y^2 + 3bz^2)
+        let z = t3 * self.y * self.z; // 8y^3z
 
-        G2Projective {
-            x: x3,
-            y: y3,
-            z: z3,
-        }
+        G2Projective { x, y, z }
     }
 
     /// Adds this point to another point.
@@ -718,23 +804,19 @@ impl G2Projective {
         let t0 = self.x * rhs.x;
         let t1 = self.y * rhs.y;
         let t2 = self.z * rhs.z;
-        let t3 = (self.x + self.y) * (rhs.x + rhs.y) - t0 - t1;
-        let t4 = (self.y + self.z) * (rhs.y + rhs.z) - t1 - t2;
-        let y3 = (self.x + self.z) * (rhs.x + rhs.z) - t0 - t2;
-        let t0 = t0.double() + t0;
-        let t2 = mul_by_3b(t2);
-        let z3 = t1 + t2;
-        let t1 = t1 - t2;
-        let y3 = mul_by_3b(y3);
-        let x3 = Fp2::lin_comb(&y3, &-t4, &t3, &t1);
-        let y3 = Fp2::lin_comb(&y3, &t0, &t1, &z3);
-        let z3 = Fp2::lin_comb(&z3, &t4, &t0, &t3);
+        let t3 = (self.x + self.y) * (rhs.x + rhs.y) - (t0 + t1);
+        let t4 = (self.y + self.z) * (rhs.y + rhs.z) - (t1 + t2);
+        let t5 = (self.x + self.z) * (rhs.x + rhs.z) - (t0 + t2);
+        let t6 = t0.double() + t0;
+        let t7 = fp2_mul_by_3b(t2);
+        let t8 = t1 + t7;
+        let t9 = t1 - t7;
+        let t10 = fp2_mul_by_3b(t5);
+        let x = Fp2::lin_comb(&t10, &-t4, &t3, &t9);
+        let y = Fp2::lin_comb(&t10, &t6, &t9, &t8);
+        let z = Fp2::lin_comb(&t8, &t4, &t6, &t3);
 
-        G2Projective {
-            x: x3,
-            y: y3,
-            z: z3,
-        }
+        G2Projective { x, y, z }
     }
 
     /// Adds this point to another point in the affine model.
@@ -743,44 +825,44 @@ impl G2Projective {
 
         let t0 = self.x * rhs.x;
         let t1 = self.y * rhs.y;
-        let t3 = (rhs.x + rhs.y) * (self.x + self.y) - t0 - t1;
-        let t4 = (rhs.y * self.z) + self.y;
-        let y3 = (rhs.x * self.z) + self.x;
-        let t0 = t0.double() + t0;
-        let t2 = mul_by_3b(self.z);
-        let z3 = t1 + t2;
-        let t1 = t1 - t2;
-        let y3 = mul_by_3b(y3);
-        let x3 = Fp2::lin_comb(&y3, &-t4, &t3, &t1);
-        let y3 = Fp2::lin_comb(&y3, &t0, &t1, &z3);
-        let z3 = Fp2::lin_comb(&z3, &t4, &t0, &t3);
+        let t2 = (rhs.x + rhs.y) * (self.x + self.y) - (t0 + t1);
+        let t3 = (rhs.y * self.z) + self.y;
+        let t4 = (rhs.x * self.z) + self.x;
+        let t5 = t0.double() + t0;
+        let t6 = fp2_mul_by_3b(self.z);
+        let t7 = t1 + t6;
+        let t8 = t1 - t6;
+        let t9 = fp2_mul_by_3b(t4);
+        let x = Fp2::lin_comb(&t9, &-t3, &t2, &t8);
+        let y = Fp2::lin_comb(&t9, &t5, &t8, &t7);
+        let z = Fp2::lin_comb(&t7, &t3, &t5, &t2);
 
-        let tmp = G2Projective {
-            x: x3,
-            y: y3,
-            z: z3,
-        };
+        let tmp = G2Projective { x, y, z };
 
         G2Projective::conditional_select(&tmp, self, rhs.is_identity())
     }
 
-    fn multiply(&self, by: &[u8]) -> G2Projective {
-        let mut acc = G2Projective::identity();
-
+    #[inline(always)]
+    fn multiply<const LIMBS: usize>(&self, by: &UInt<LIMBS>) -> G2Projective {
         // This is a simple double-and-add implementation of point
         // multiplication, moving from most significant to least
         // significant bit of the scalar.
         //
         // We skip the leading bit because it's always unset for Fq
         // elements.
-        for bit in by
-            .iter()
-            .rev()
-            .flat_map(|byte| (0..8).rev().map(move |i| Choice::from((byte >> i) & 1u8)))
-            .skip(1)
-        {
-            acc = acc.double();
-            acc = G2Projective::conditional_select(&acc, &(acc + self), bit);
+        let mut acc = G2Projective::identity();
+        let mut i = (LIMBS * Limb::BIT_SIZE) - 1;
+        let dbl = self.double();
+        let slots = [G2Projective::identity(), *self, dbl, dbl + self];
+
+        loop {
+            let slot = (by.bit_vartime(i - 1) + 2 * by.bit_vartime(i)) as usize;
+            acc = acc.add(&ct_select_table(&slots, slot));
+            if i == 1 {
+                break;
+            }
+            i -= 2;
+            acc = acc.double().double();
         }
 
         acc
@@ -876,13 +958,11 @@ impl G2Projective {
     /// h_2$, where $h_2$ is the cofactor of $\mathbb{G}\_2$ and $z$ is the
     /// parameter of BLS12-381.
     pub fn clear_cofactor(&self) -> G2Projective {
-        let t1 = self.mul_by_x(); // [x] P
-        let t2 = self.psi(); // psi(P)
+        let t0 = self.mul_by_x() + self.psi(); // [x] P + psi(P)
 
         self.double().psi2() // psi^2(2P)
-            + (t1 + t2).mul_by_x() // psi^2(2P) + [x^2] P + [x] psi(P)
-            - (t1 // psi^2(2P) + [x^2 - x] P + [x] psi(P)
-            + t2 // psi^2(2P) + [x^2 - x] P + [x - 1] psi(P)
+            + t0.mul_by_x()  // psi^2(2P) + [x^2] P + [x] psi(P)
+            - (t0            // psi^2(2P) + [x^2 - x] P + [x - 1] psi(P)
             + self) // psi^2(2P) + [x^2 - x - 1] P + [x - 1] psi(P)
     }
 
@@ -893,12 +973,20 @@ impl G2Projective {
 
         let mut acc = Fp2::one();
         for (p, q) in p.iter().zip(q.iter_mut()) {
+            let skip = p.is_identity();
+
             // We use the `x` field of `G2Affine` to store the product
             // of previous z-coordinates seen.
             q.x = acc;
 
-            // We will end up skipping all identities in p
-            acc = Fp2::conditional_select(&(acc * p.z), &acc, p.is_identity());
+            // We use the `y` field to store the effective z-coordinate.
+            q.y = Fp2::conditional_select(&p.z, &Fp2::one(), skip);
+
+            // Set to the correct value
+            q.infinity = skip.unwrap_u8();
+
+            // We will end up skipping all identities in p.
+            acc *= q.y;
         }
 
         // This is the inverse, as all z-coordinates are nonzero and the ones
@@ -906,20 +994,15 @@ impl G2Projective {
         acc = acc.invert().unwrap();
 
         for (p, q) in p.iter().rev().zip(q.iter_mut().rev()) {
-            let skip = p.is_identity();
-
             // Compute tmp = 1/z
             let tmp = q.x * acc;
 
             // Cancel out z-coordinate in denominator of `acc`
-            acc = Fp2::conditional_select(&(acc * p.z), &acc, skip);
+            acc *= q.y;
 
             // Set the coordinates to the correct value
             q.x = p.x * tmp;
             q.y = p.y * tmp;
-            q.infinity = 0u8;
-
-            *q = G2Affine::conditional_select(q, &G2Affine::identity(), skip);
         }
     }
 
@@ -938,7 +1021,7 @@ impl G2Projective {
         (self.y.square() * self.z).ct_eq(&Fp2::lin_comb(
             &self.x.square(),
             &self.x,
-            &(self.z.square() * B),
+            &self.z.double().square().mul_by_nonresidue(),
             &self.z,
         )) | self.z.is_zero()
     }
@@ -951,6 +1034,17 @@ impl G2Projective {
             y: self.y.neg(),
             z: self.z,
         }
+    }
+
+    /// Calculate a linear combination of points multiplied by scalars.
+    pub fn sum_of_products(points: &[Self], scalars: &[Scalar]) -> Self {
+        sum_of_products(points, scalars)
+    }
+
+    /// Calculate a linear combination of points multiplied by scalars.
+    /// Runs in variable time - for non-secret scalar values only.
+    pub fn sum_of_products_vartime(points: &[Self], scalars: &[Scalar]) -> Self {
+        sum_of_products_vartime(points, scalars)
     }
 }
 
@@ -1791,6 +1885,28 @@ fn test_projective_scalar_multiplication() {
     let c = a * b;
 
     assert_eq!((g * a) * b, g * c);
+
+    assert_eq!(
+        G2Projective::sum_of_products(
+            &[
+                G2Projective::generator(),
+                G2Projective::generator().double()
+            ],
+            &[a, b]
+        ),
+        G2Projective::generator() * (a + b.double())
+    );
+
+    assert_eq!(
+        G2Projective::sum_of_products_vartime(
+            &[
+                G2Projective::generator(),
+                G2Projective::generator().double()
+            ],
+            &[a, b]
+        ),
+        G2Projective::generator() * (a + b.double())
+    );
 }
 
 #[test]
@@ -1811,6 +1927,22 @@ fn test_affine_scalar_multiplication() {
     let c = a * b;
 
     assert_eq!(G2Affine::from(g * a) * b, g * c);
+
+    assert_eq!(
+        G2Affine::sum_of_products(
+            &[G2Affine::generator(), G2Affine::generator().double().into()],
+            &[a, b]
+        ),
+        G2Projective::generator() * (a + b.double())
+    );
+
+    assert_eq!(
+        G2Affine::sum_of_products_vartime(
+            &[G2Affine::generator(), G2Affine::generator().double().into()],
+            &[a, b]
+        ),
+        G2Projective::generator() * (a + b.double())
+    );
 }
 
 #[test]
@@ -2033,11 +2165,9 @@ fn test_clear_cofactor() {
 
     // test the effect on q-torsion points multiplying by h_eff modulo |Scalar|
     // h_eff % q = 0x2b116900400069009a40200040001ffff
-    let h_eff_modq: [u8; 32] = [
-        0xff, 0xff, 0x01, 0x00, 0x04, 0x00, 0x02, 0xa4, 0x09, 0x90, 0x06, 0x00, 0x04, 0x90, 0x16,
-        0xb1, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00,
-    ];
+    let h_eff_modq = crypto_bigint::U256::from_be_hex(
+        "00000000000000000000000000000002b116900400069009a40200040001ffff",
+    );
     assert_eq!(generator.clear_cofactor(), generator.multiply(&h_eff_modq));
     assert_eq!(
         cleared_point.clear_cofactor(),
@@ -2081,6 +2211,22 @@ fn test_batch_normalize() {
                 assert_eq!(&t[..], &expected[..]);
             }
         }
+    }
+}
+
+#[test]
+fn test_random_addition() {
+    use rand_core::SeedableRng;
+    let mut rng = rand_xorshift::XorShiftRng::from_seed([
+        0x59, 0x62, 0xbe, 0x5d, 0x76, 0x3d, 0x31, 0x8d, 0x17, 0xdb, 0x37, 0x32, 0x54, 0x06, 0xbc,
+        0xe5,
+    ]);
+    for _ in 0..128 {
+        let a = G2Projective::random(&mut rng);
+        let b = G2Projective::random(&mut rng);
+        let sum = a + b;
+        assert!(bool::from(sum.is_on_curve()));
+        assert_eq!(sum, G2Affine::from(a) + G2Affine::from(b));
     }
 }
 

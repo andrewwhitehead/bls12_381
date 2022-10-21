@@ -2,12 +2,14 @@ use crate::fp::Fp;
 use crate::fp12::Fp12;
 use crate::fp2::Fp2;
 use crate::fp6::Fp6;
+use crate::g2::fp2_mul_by_3b;
 use crate::{G1Affine, G1Projective, G2Affine, G2Projective, Scalar, BLS_X, BLS_X_IS_NEGATIVE};
 
 use core::borrow::Borrow;
 use core::fmt;
 use core::iter::Sum;
 use core::ops;
+
 use group::Group;
 use pairing::{Engine, PairingCurveAffine};
 use rand_core::RngCore;
@@ -49,12 +51,10 @@ impl MillerLoopResult {
         // Adaptation of Fp12 squaring algorithm
         #[must_use]
         #[inline]
-        fn fp4_square(a: Fp2, b: Fp2) -> (Fp2, Fp2) {
+        fn fp4_square(a: &Fp2, b: &Fp2) -> (Fp2, Fp2) {
             let ab = a * b;
-            let c0 = b.mul_by_nonresidue();
-            let c0 = c0 + a;
-            let c0 = c0 * (a + b);
-            let c0 = c0 - (ab + ab.mul_by_nonresidue());
+            let c0 = a + b.mul_by_nonresidue();
+            let c0 = c0 * (a + b) - ab - ab.mul_by_nonresidue();
             let c1 = ab.double();
 
             (c0, c1)
@@ -77,14 +77,14 @@ impl MillerLoopResult {
                 c2: mut z5,
             } = f.c1;
 
-            let (t0, t1) = fp4_square(z0, z1);
+            let (t0, t1) = fp4_square(&z0, &z1);
 
             // For A
             z0 = (t0 - z0).double() + t0;
             z1 = (t1 + z1).double() + t1;
 
-            let (mut t0, t1) = fp4_square(z2, z3);
-            let (t2, t3) = fp4_square(z4, z5);
+            let (mut t0, t1) = fp4_square(&z2, &z3);
+            let (t2, t3) = fp4_square(&z4, &z5);
 
             // For C
             z4 = (t0 - z4).double() + t0;
@@ -653,6 +653,65 @@ pub fn pairing(p: &G1Affine, q: &G2Affine) -> Gt {
     tmp.final_exponentiation()
 }
 
+/// Invoke the pairing function without the use of precomputation and other optimizations.
+#[cfg_attr(docsrs, doc(cfg(feature = "pairings")))]
+pub fn multi_pairing<const T: usize>(terms: &[(&G1Affine, &G2Affine); T]) -> Gt {
+    struct Adder<'a, const U: usize> {
+        terms: &'a [(&'a G1Affine, &'a G2Affine)],
+        cur: [G2Projective; U],
+    }
+
+    impl<'a, const U: usize> MillerLoopDriver for Adder<'a, U> {
+        type Output = Fp12;
+
+        #[inline]
+        fn doubling_step(&mut self, mut f: Self::Output) -> Self::Output {
+            for (idx, &(p, r)) in self.terms.iter().enumerate() {
+                let either_identity = p.is_identity() | r.is_identity();
+
+                let coeffs = doubling_step(&mut self.cur[idx]);
+                let new_f = ell(f, &coeffs, p);
+                f = Fp12::conditional_select(&new_f, &f, either_identity);
+            }
+            f
+        }
+        #[inline]
+        fn addition_step(&mut self, mut f: Self::Output) -> Self::Output {
+            for (idx, &(p, r)) in self.terms.iter().enumerate() {
+                let either_identity = p.is_identity() | r.is_identity();
+
+                let coeffs = addition_step(&mut self.cur[idx], r);
+                let new_f = ell(f, &coeffs, p);
+                f = Fp12::conditional_select(&new_f, &f, either_identity);
+            }
+            f
+        }
+        #[inline]
+        fn square_output(f: Self::Output) -> Self::Output {
+            f.square()
+        }
+        #[inline]
+        fn conjugate(f: Self::Output) -> Self::Output {
+            f.conjugate()
+        }
+        #[inline(always)]
+        fn one() -> Self::Output {
+            Fp12::one()
+        }
+    }
+
+    let mut adder = Adder {
+        terms,
+        cur: [G2Projective::identity(); T],
+    };
+    for idx in 0..T {
+        adder.cur[idx] = G2Projective::from(terms[idx].1);
+    }
+
+    let tmp = miller_loop(&mut adder);
+    MillerLoopResult(tmp).final_exponentiation()
+}
+
 trait MillerLoopDriver {
     type Output;
 
@@ -702,42 +761,65 @@ fn ell(f: Fp12, coeffs: &(Fp2, Fp2, Fp2), p: &G1Affine) -> Fp12 {
 }
 
 fn doubling_step(r: &mut G2Projective) -> (Fp2, Fp2, Fp2) {
-    // Adaptation of Algorithm 26, https://eprint.iacr.org/2010/354.pdf
-    let xsquared = r.x.square();
-    let ysquared_2 = r.y.square().double(); // 2y^2
-    let ysquared_4 = ysquared_2.double(); // 4y^2
-    let zsquared = r.z.square();
-    let t1 = xsquared.double() + xsquared; // 3x^2
-    let t2 = t1 * r.x; // 3x^3
-    let t3 = t2.double() + t2; // 9x^3
+    // Adaptation of Section 5 of https://eprint.iacr.org/2009/615.pdf
 
-    r.x *= t3 - ysquared_4.double(); // 9x^4 - 8xy^2
-    r.z = (r.y * r.z).double(); // 2yz
-    r.y = (ysquared_4 - t2) * t3 - ysquared_2.square().double(); // 36x^3.y^2 - 27x^6 - 8y^4
+    // A = X1^2, B = Y1^2, C = Z1^2
+    let a = r.x.square();
+    let b = r.y.square();
+    let c = r.z.square();
 
-    let c0 = (r.z * zsquared).double(); // 4yz^3
-    let c1 = -(t1 * zsquared).double(); // -6x^2.z^2
-    let c2 = t2.double() - ysquared_4; // 6x^3 - 4y^2
-    (c0, c1, c2)
+    // D = 3b'C, E = (X1 + Y1)^2 - A - B
+    let d = fp2_mul_by_3b(c);
+    let e = (r.x * r.y).double();
+
+    // F = (Y1 + Z1)^2 - B - C, G = 3D
+    let f = (r.y * r.z).double();
+    let g = d.double() + d;
+
+    // X3 = E * (B - G), Y3 = (B + G)^2 - 12D^2, Z3 = 4BF
+    r.x = e * (b - g);
+    let t0 = d.double().square();
+    r.y = (b + g).square() - t0.double() - t0;
+    r.z = b * f.double().double();
+
+    // l00 = D - B, l11 = -F, l01 = 3A
+    let l00 = d - b;
+    let l11 = -f;
+    let l01 = a.double() + a;
+
+    (l11, l01, l00)
 }
 
 fn addition_step(r: &mut G2Projective, q: &G2Affine) -> (Fp2, Fp2, Fp2) {
-    // Adaptation of Algorithm 27, https://eprint.iacr.org/2010/354.pdf
-    let rzsquared = r.z.square();
-    let t2 = rzsquared * q.x - r.x; // rz^2.qx - rx
-    let t4 = t2.double().square(); // 4.t2^2
-    let t5 = t2 * t4; // 4.t2^3
-    let t6 = (q.y * r.z * rzsquared - r.y).double(); // 2rz^3.qy - 2ry
-    let t7 = t4 * r.x; // 4.t2^2.rx
+    // Adaptation of Section 4.3, https://eprint.iacr.org/2013/722.pdf
 
-    r.x = t6.square() - t5 - t7.double();
-    r.y = Fp2::lin_comb(&(t7 - r.x), &t6, &-r.y.double(), &t5);
-    r.z *= t2.double();
+    // A = Y1 - Z1 * Y2
+    let a = r.y - r.z * q.y;
 
-    let c0 = r.z.double(); // 4rz^3.qx - 4rx.rz
-    let c1 = -t6.double(); // -4rz^3.qy + 4ry
-    let c2 = Fp2::lin_comb(&t6, &q.x, &-r.z, &q.y).double(); // 2rz^3.qx.qy - 2ry.qx
-    (c0, c1, c2)
+    // B = X1 - Z1 * X2
+    let b = r.x - r.z * q.x;
+
+    // C = A^2, D = B^2, E = B^3, F = E + Z1 * C
+    let c = a.square();
+    let d = b.square();
+    let e = b * d;
+    let f = e + r.z * c;
+
+    // G = X1 * D, H = F - 2 * G
+    let g = r.x * d;
+    let h = f - g.double();
+
+    // X3 = B * H, Y3 = A * (G - H) - Y1 * E, Z3 = Z1 * E
+    r.x = b * h;
+    r.y = Fp2::lin_comb(&a, &(g - h), &-r.y, &e);
+    r.z = r.z * e;
+
+    // l00 = A * X2 - B * Y2, l11 = B, l01 = -A
+    let l00 = Fp2::lin_comb(&a, &q.x, &-b, &q.y);
+    let l01 = -a;
+    let l11 = b;
+
+    (l11, l01, l00)
 }
 
 impl PairingCurveAffine for G1Affine {
@@ -889,6 +971,9 @@ fn test_multi_miller_loop() {
     .final_exponentiation();
 
     assert_eq!(expected, test);
+
+    let test2 = multi_pairing(&[(&a1, &b1), (&a2, &b2), (&a3, &b3), (&a4, &b4), (&a5, &b5)]);
+    assert_eq!(expected, test2);
 }
 
 #[test]
@@ -914,6 +999,34 @@ fn test_miller_loop_result_zeroize() {
 
 #[test]
 fn tricking_miller_loop_result() {
+    assert_eq!(
+        multi_miller_loop(&[(&G1Affine::identity(), &G2Affine::generator().into())]).0,
+        Fp12::one()
+    );
+    assert_eq!(
+        multi_miller_loop(&[(&G1Affine::generator(), &G2Affine::identity().into())]).0,
+        Fp12::one()
+    );
+    assert_ne!(
+        multi_miller_loop(&[
+            (&G1Affine::generator(), &G2Affine::generator().into()),
+            (&-G1Affine::generator(), &G2Affine::generator().into())
+        ])
+        .0,
+        Fp12::one()
+    );
+    assert_eq!(
+        multi_miller_loop(&[
+            (&G1Affine::generator(), &G2Affine::generator().into()),
+            (&-G1Affine::generator(), &G2Affine::generator().into())
+        ])
+        .final_exponentiation(),
+        Gt::identity()
+    );
+}
+
+#[test]
+fn tricking_multi_pairing_result() {
     assert_eq!(
         multi_miller_loop(&[(&G1Affine::identity(), &G2Affine::generator().into())]).0,
         Fp12::one()

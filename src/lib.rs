@@ -73,11 +73,13 @@ const BLS_X: u64 = 0xd201_0000_0001_0000;
 #[cfg(feature = "groups")]
 const BLS_X_IS_NEGATIVE: bool = true;
 
+mod multiexp;
+
 #[cfg(feature = "pairings")]
 mod pairings;
 
 #[cfg(feature = "pairings")]
-pub use pairings::{pairing, Bls12, Gt, MillerLoopResult};
+pub use pairings::{multi_pairing, pairing, Bls12, Gt, MillerLoopResult};
 
 #[cfg(all(feature = "pairings", feature = "alloc"))]
 pub use pairings::{multi_miller_loop, G2Prepared};
