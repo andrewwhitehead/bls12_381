@@ -250,6 +250,123 @@ impl Fp12 {
                 c1: self.c1 * -t,
             })
     }
+
+    // Adaptation of Algorithm 5.5.4, Guide to Pairing-Based Cryptography
+    // Faster Squaring in the Cyclotomic Subgroup of Sixth Degree Extensions
+    // https://eprint.iacr.org/2009/565.pdf
+    #[must_use]
+    #[inline]
+    fn cyclotomic_square(&self) -> Fp12 {
+        // Adaptation of Fp12 squaring algorithm
+        #[must_use]
+        #[inline]
+        fn fp4_square(a: &Fp2, b: &Fp2) -> (Fp2, Fp2) {
+            let ab = a * b;
+            let c0 = a + b.mul_by_nonresidue();
+            let c0 = c0 * (a + b) - ab - ab.mul_by_nonresidue();
+            let c1 = ab.double();
+
+            (c0, c1)
+        }
+
+        let Fp6 {
+            c0: mut z0,
+            c1: mut z4,
+            c2: mut z3,
+        } = self.c0;
+        let Fp6 {
+            c0: mut z2,
+            c1: mut z1,
+            c2: mut z5,
+        } = self.c1;
+
+        let (t0, t1) = fp4_square(&z0, &z1);
+
+        // For A
+        z0 = (t0 - z0).double() + t0;
+        z1 = (t1 + z1).double() + t1;
+
+        let (mut t0, t1) = fp4_square(&z2, &z3);
+        let (t2, t3) = fp4_square(&z4, &z5);
+
+        // For C
+        z4 = (t0 - z4).double() + t0;
+        z5 = (t1 + z5).double() + t1;
+
+        // For B
+        t0 = t3.mul_by_nonresidue();
+        z2 = (t0 + z2).double() + t0;
+        z3 = (t2 - z3).double() + t2;
+
+        Fp12 {
+            c0: Fp6 {
+                c0: z0,
+                c1: z4,
+                c2: z3,
+            },
+            c1: Fp6 {
+                c0: z2,
+                c1: z1,
+                c2: z5,
+            },
+        }
+    }
+
+    #[must_use]
+    #[inline]
+    fn cycolotomic_exp(&self) -> Fp12 {
+        let mut acc = *self;
+        let mut i = 1u64 << 62;
+        while i != 0 {
+            acc = acc.cyclotomic_square();
+            if crate::BLS_X & i != 0 {
+                acc *= self;
+            }
+            i >>= 1;
+        }
+        if crate::BLS_X_IS_NEGATIVE {
+            acc.conjugate()
+        } else {
+            acc
+        }
+    }
+
+    /// This performs a "final exponentiation" routine to convert the result
+    /// of a Miller loop into an element of `Gt` with help of efficient squaring
+    /// operation in the so-called `cyclotomic subgroup` of `Fq6` so that
+    /// it can be compared with other elements of `Gt`.
+    pub(crate) fn final_exponentiation(&self) -> Self {
+        self.invert()
+            .map(|mut t1| {
+                let mut t0 = self.frobenius_map(6);
+                t1 *= t0;
+                let t2 = t1.frobenius_map(2) * t1;
+                t1 = t2.cyclotomic_square().conjugate();
+                let mut t3 = t2.cycolotomic_exp();
+                let mut t4 = t3.cyclotomic_square();
+                let mut t5 = t1 * t3;
+                t1 = t5.cycolotomic_exp();
+                t0 = t1.cycolotomic_exp();
+                let mut t6 = t0.cycolotomic_exp();
+                t6 *= t4;
+                t4 = t6.cycolotomic_exp();
+                t4 *= t5.conjugate() * t2;
+                t5 = t2.conjugate();
+                t1 *= t2;
+                t1 = t1.frobenius_map(3);
+                t6 *= t5;
+                t6 = t6.frobenius_map(1);
+                t3 *= t0;
+                t3 = t3.frobenius_map(2);
+                t3 *= t1;
+                t3 *= t6;
+                t3 * t4
+            })
+            // We unwrap() because `MillerLoopResult` can only be constructed
+            // by a function within this crate, and we uphold the invariant
+            // that the enclosed value is nonzero.
+            .unwrap()
+    }
 }
 
 impl<'a, 'b> ops::Mul<&'b Fp12> for &'a Fp12 {

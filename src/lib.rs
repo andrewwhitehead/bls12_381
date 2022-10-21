@@ -56,11 +56,15 @@ mod fp2;
 mod g1;
 #[cfg(feature = "groups")]
 mod g2;
+#[cfg(feature = "groups")]
+mod gt;
 
 #[cfg(feature = "groups")]
 pub use g1::{G1Affine, G1Projective};
 #[cfg(feature = "groups")]
 pub use g2::{G2Affine, G2Projective};
+#[cfg(feature = "groups")]
+pub use gt::Gt;
 
 #[cfg(feature = "groups")]
 mod fp12;
@@ -79,7 +83,7 @@ mod multiexp;
 mod pairings;
 
 #[cfg(feature = "pairings")]
-pub use pairings::{multi_pairing, pairing, Bls12, Gt, MillerLoopResult};
+pub use pairings::{multi_pairing, pairing, Bls12, MillerLoopResult};
 
 #[cfg(all(feature = "pairings", feature = "alloc"))]
 pub use pairings::{multi_miller_loop, G2Prepared};
